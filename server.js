@@ -77,8 +77,9 @@ app.get('/shopify/callback', async (req, res) => {
   }
 });
 
-// ── In-memory image store ─────────────────────────────────────────────────────
+// ── In-memory image store + caches ───────────────────────────────────────────
 const generatedImages = {}; // { productId: base64 }
+let allProductsCache  = null;
 
 // ── Core AI logic ─────────────────────────────────────────────────────────────
 async function buildPrompt(productTitle, collectionTitle, metafields) {
@@ -196,6 +197,13 @@ app.get('/api/collections', requireAuth, async (req, res) => {
   try {
     const collections = await shopify.getTargetCollections();
     res.json({ collections });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/all-products', requireAuth, async (req, res) => {
+  try {
+    if (!allProductsCache) allProductsCache = await shopify.getAllProducts();
+    res.json({ products: allProductsCache });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -520,11 +528,15 @@ textarea{resize:vertical;line-height:1.5}
       <h2>Generar imagen para marketing</h2>
       <p>Selecciona un producto de la colección cargada, escribe o sugiere un prompt, y agrega texto opcional que aparecerá en la imagen. La imagen generada se puede descargar directamente.</p>
 
+      <div class="form-group" style="margin-bottom:8px">
+        <label>Buscar producto</label>
+        <input type="text" id="mkt-search" placeholder="Escribe parte del título..." oninput="filterMarketingProducts()" autocomplete="off">
+      </div>
       <div class="form-group" style="margin-bottom:20px">
-        <label>Producto</label>
-        <select id="mkt-product-select" onchange="onMarketingProductChange()">
-          <option value="">— Carga una colección primero —</option>
+        <select id="mkt-product-select" onchange="onMarketingProductChange()" size="1">
+          <option value="">— Cargando productos... —</option>
         </select>
+        <span id="mkt-count" style="font-size:11px;color:#9a8a7a;margin-top:4px"></span>
       </div>
 
       <div class="mkt-product-row">

@@ -5,6 +5,8 @@ let currentCollection = null;
 const productStates   = {};
 const generationLog   = [];
 let marketingResultBase64 = null;
+let allProductsData   = [];
+let allProductsLoaded = false;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -19,6 +21,7 @@ function switchTab(tab) {
   );
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
+  if (tab === 'marketing' && !allProductsLoaded) loadAllProducts();
 }
 
 // ── Collections ───────────────────────────────────────────────────────────────
@@ -57,7 +60,6 @@ async function loadProducts() {
     productsData = data.products;
     renderProducts(productsData);
     document.getElementById('batch-bar').style.display = productsData.length ? 'flex' : 'none';
-    updateMarketingProductSelector();
   } catch (e) {
     showToast('Error cargando productos: ' + e.message, true);
   } finally {
@@ -396,24 +398,51 @@ function exportLog() {
 }
 
 // ── Marketing tab ─────────────────────────────────────────────────────────────
-function updateMarketingProductSelector() {
+async function loadAllProducts() {
   const sel = document.getElementById('mkt-product-select');
-  if (!productsData.length) {
-    sel.innerHTML = '<option value="">— Carga una colección primero —</option>';
-    document.getElementById('btn-mkt-generate').disabled = true;
-    return;
+  sel.innerHTML = '<option value="">Cargando todos los productos...</option>';
+  try {
+    const data = await api('/api/all-products');
+    allProductsData   = data.products;
+    allProductsLoaded = true;
+    filterMarketingProducts();
+  } catch (e) {
+    sel.innerHTML = '<option value="">Error al cargar productos</option>';
+    showToast('Error cargando productos: ' + e.message, true);
   }
+}
+
+function filterMarketingProducts() {
+  const query    = (document.getElementById('mkt-search')?.value || '').trim().toLowerCase();
+  const filtered = query
+    ? allProductsData.filter(p => p.title.toLowerCase().includes(query))
+    : allProductsData;
+
+  const sel   = document.getElementById('mkt-product-select');
+  const count = document.getElementById('mkt-count');
+
   sel.innerHTML = '<option value="">— Selecciona un producto —</option>' +
-    productsData.map(p =>
+    filtered.slice(0, 150).map(p =>
       `<option value="${p.id}" data-image="${escHtml(p.image || '')}" data-title="${escHtml(p.title)}">${escHtml(p.title)}</option>`
     ).join('');
+
+  if (count) {
+    count.textContent = filtered.length > 150
+      ? `Mostrando 150 de ${filtered.length} resultados — refina la búsqueda`
+      : filtered.length === allProductsData.length
+        ? `${allProductsData.length} productos`
+        : `${filtered.length} resultado${filtered.length !== 1 ? 's' : ''}`;
+  }
+
+  document.getElementById('btn-mkt-generate').disabled = true;
+  document.getElementById('mkt-thumb-wrap').innerHTML = '<div class="mkt-product-thumb-empty">🖼</div>';
 }
 
 function onMarketingProductChange() {
-  const sel = document.getElementById('mkt-product-select');
-  const opt = sel.options[sel.selectedIndex];
+  const sel    = document.getElementById('mkt-product-select');
+  const opt    = sel.options[sel.selectedIndex];
   const imgUrl = opt?.dataset?.image || '';
-  const wrap = document.getElementById('mkt-thumb-wrap');
+  const wrap   = document.getElementById('mkt-thumb-wrap');
 
   wrap.innerHTML = imgUrl
     ? `<img class="mkt-product-thumb" src="${escHtml(imgUrl)}" alt="">`
@@ -425,7 +454,7 @@ function onMarketingProductChange() {
 
 async function suggestMarketingPrompt() {
   const sel = document.getElementById('mkt-product-select');
-  if (!sel.value || !currentCollection) {
+  if (!sel.value) {
     showToast('Selecciona un producto primero', true);
     return;
   }
@@ -437,7 +466,7 @@ async function suggestMarketingPrompt() {
   try {
     const data = await api('/api/suggest-prompt', 'POST', {
       productTitle:    opt.dataset.title,
-      collectionTitle: currentCollection.title,
+      collectionTitle: 'General',
       productId:       sel.value,
     });
     document.getElementById('mkt-prompt').value = data.prompt;

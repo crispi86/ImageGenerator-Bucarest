@@ -55,9 +55,15 @@ async function getAllPages(path, key) {
 async function getTargetCollections() {
   const custom = await getAllPages('custom_collections.json?fields=id,title,image', 'custom_collections');
   const smart  = await getAllPages('smart_collections.json?fields=id,title,image', 'smart_collections');
-  const all = [...custom, ...smart];
-  return all
-    .filter(c => TARGET_COLLECTIONS.includes(c.title))
+  return [...custom, ...smart].sort((a, b) => a.title.localeCompare(b.title));
+}
+
+async function getAllProducts() {
+  const fields = 'id,title,images';
+  const products = await getAllPages(`products.json?status=active&fields=${fields}`, 'products');
+  return products
+    .filter(p => p.images?.length > 0)
+    .map(p => ({ id: p.id, title: p.title, image: p.images[0].src }))
     .sort((a, b) => a.title.localeCompare(b.title));
 }
 
@@ -111,6 +117,7 @@ module.exports = {
   shopifyRequest,
   getAllPages,
   getTargetCollections,
+  getAllProducts,
   getProductsByCollection,
   getProductMetafields,
   uploadProductImage,
