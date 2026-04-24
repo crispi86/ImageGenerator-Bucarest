@@ -344,16 +344,13 @@ function toggleSelectAll(chk) {
 
 function updateBatchControls() {
   const selected = getSelectedIds();
-  const btn  = document.getElementById('btn-batch');
-  const chip = document.getElementById('cost-estimate');
+  const btn = document.getElementById('btn-batch');
   if (selected.length > 0) {
     btn.disabled = false;
     btn.textContent = `Generar seleccionados (${selected.length})`;
-    chip.textContent = `Costo estimado: $${(selected.length * 0.04).toFixed(2)} USD`;
   } else {
     btn.disabled = true;
     btn.textContent = 'Generar seleccionados';
-    chip.textContent = 'Selecciona productos para ver el costo';
   }
 }
 
@@ -367,7 +364,6 @@ async function loadStats() {
     const data = await api('/api/stats');
     document.getElementById('stat-generated').textContent = data.generated + ' generadas';
     document.getElementById('stat-approved').textContent  = data.approved + ' aprobadas';
-    document.getElementById('stat-cost').textContent      = '$' + data.costUSD.toFixed(2) + ' USD';
   } catch {}
 }
 

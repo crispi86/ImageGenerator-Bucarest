@@ -20,7 +20,7 @@ app.use((req, res, next) => {
 
 // ── Usage tracking ────────────────────────────────────────────────────────────
 const DAILY_LIMIT = parseInt(process.env.DAILY_IMAGE_LIMIT) || 100;
-let stats = { generated: 0, approved: 0, rejected: 0, costUSD: 0 };
+let stats = { generated: 0, approved: 0, rejected: 0 };
 const generationLog = [];
 
 // ── AI clients ────────────────────────────────────────────────────────────────
@@ -261,7 +261,6 @@ app.post('/api/generate', requireAuth, async (req, res) => {
 
     generatedImages[productId] = base64;
     stats.generated++;
-    stats.costUSD = Math.round((stats.costUSD + 0.04) * 100) / 100;
 
     generationLog.push({
       productId, productTitle, collectionTitle, prompt, status: 'generated', ts: new Date().toISOString(),
@@ -309,7 +308,6 @@ app.post('/api/generate-batch', requireAuth, async (req, res) => {
 
       generatedImages[productId] = base64;
       stats.generated++;
-      stats.costUSD = Math.round((stats.costUSD + 0.04) * 100) / 100;
 
       generationLog.push({
         productId, productTitle, collectionTitle, prompt, status: 'generated', ts: new Date().toISOString(),
@@ -340,7 +338,6 @@ app.post('/api/generate-marketing', requireAuth, async (req, res) => {
     const base64        = await addMarketingOverlay(genBuffer, overlayText);
 
     stats.generated++;
-    stats.costUSD = Math.round((stats.costUSD + 0.04) * 100) / 100;
 
     res.json({ imageBase64: base64 });
   } catch (e) {
@@ -496,7 +493,6 @@ textarea{resize:vertical;line-height:1.5}
   <div class="stats-bar" id="stats-bar">
     <span id="stat-generated">0 generadas</span>
     <span id="stat-approved">0 aprobadas</span>
-    <span id="stat-cost">$0.00 USD</span>
   </div>
 </div>
 
@@ -537,7 +533,6 @@ textarea{resize:vertical;line-height:1.5}
         <input type="checkbox" id="select-all" onchange="toggleSelectAll(this)" style="width:16px;height:16px;accent-color:#2c4a3e">
         Seleccionar todo
       </label>
-      <span class="cost-chip" id="cost-estimate">Selecciona productos para ver el costo</span>
       <button class="btn btn-primary btn-sm" id="btn-batch" onclick="generateBatch()" disabled>
         Generar seleccionados
       </button>
