@@ -391,21 +391,12 @@ app.get('/app.js', (req, res) => res.sendFile(path.join(__dirname, 'app.js')));
 
 // ── Admin UI ──────────────────────────────────────────────────────────────────
 function adminHTML(host = '') {
-  const apiKey = (process.env.SHOPIFY_API_KEY || '').trim();
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bucarest Image Generator</title>
-${host ? `<script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
-<script>
-  document.addEventListener('DOMContentLoaded', function() {
-    if (window['app-bridge'] && '${apiKey}') {
-      window.__shopifyApp = window['app-bridge'].default({ apiKey: '${apiKey}', host: '${host}', forceRedirect: false });
-    }
-  });
-</script>` : ''}
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0ece6;color:#2d2018;min-height:100vh}
