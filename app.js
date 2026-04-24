@@ -66,7 +66,9 @@ async function loadProducts() {
     const data = await api(`/api/products?collectionId=${collectionId}`);
     productsData = data.products;
     renderProducts(productsData);
-    document.getElementById('batch-bar').style.display = productsData.length ? 'flex' : 'none';
+    document.getElementById('batch-bar').style.display  = productsData.length ? 'flex'  : 'none';
+    document.getElementById('hint-card').style.display  = productsData.length ? 'flex'  : 'none';
+    document.getElementById('catalog-prompt-hint').value = '';
   } catch (e) {
     showToast('Error cargando productos: ' + e.message, true);
   } finally {
@@ -135,6 +137,7 @@ async function generateSingle(productId, btn, customPrompt = null) {
   if (btn) btn.disabled = true;
 
   try {
+    const hint = document.getElementById('catalog-prompt-hint')?.value.trim();
     const body = {
       productId,
       productTitle: product.title,
@@ -142,6 +145,7 @@ async function generateSingle(productId, btn, customPrompt = null) {
       productImageUrl: product.image,
     };
     if (customPrompt) body.customPrompt = customPrompt;
+    if (hint && !customPrompt) body.promptHint = hint;
 
     const data = await api('/api/generate', 'POST', body);
     productStates[productId] = { imageUrl: data.imageUrl, prompt: data.prompt };
@@ -187,9 +191,10 @@ async function generateBatch() {
   progressWrap.style.display = 'block';
   progressFill.style.width = '0%';
 
+  const hint  = document.getElementById('catalog-prompt-hint')?.value.trim() || null;
   const prods = selected.map(id => {
     const p = productsData.find(pr => String(pr.id) === String(id));
-    return { productId: id, productTitle: p?.title || '', productImageUrl: p?.image || null };
+    return { productId: id, productTitle: p?.title || '', productImageUrl: p?.image || null, promptHint: hint };
   });
 
   try {

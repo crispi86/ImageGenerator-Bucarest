@@ -82,7 +82,7 @@ const generatedImages = {}; // { productId: base64 }
 let allProductsCache  = null;
 
 // ── Core AI logic ─────────────────────────────────────────────────────────────
-async function buildPrompt(productTitle, collectionTitle, metafields) {
+async function buildPrompt(productTitle, collectionTitle, metafields, promptHint = null) {
   const context  = getContext(collectionTitle, productTitle, metafields);
   const sizeDesc = getSizeDescription(metafields.alto, metafields.ancho, collectionTitle);
 
@@ -95,6 +95,7 @@ async function buildPrompt(productTitle, collectionTitle, metafields) {
 
 The product should appear: ${context}
 ${sizeDesc ? `The piece is a ${sizeDesc}.` : ''}
+${promptHint ? `\nAdditional instruction (takes priority over defaults above): ${promptHint}` : ''}
 
 Requirements:
 - Keep the product exactly as it appears in the reference photo — same colors, details, patina, texture
@@ -227,7 +228,7 @@ app.post('/api/suggest-prompt', requireAuth, async (req, res) => {
 });
 
 app.post('/api/generate', requireAuth, async (req, res) => {
-  const { productId, productTitle, collectionTitle, productImageUrl, customPrompt } = req.body;
+  const { productId, productTitle, collectionTitle, productImageUrl, customPrompt, promptHint } = req.body;
   if (!productId || !productTitle || !collectionTitle)
     return res.status(400).json({ error: 'Faltan parámetros' });
   if (!productImageUrl)
@@ -239,7 +240,7 @@ app.post('/api/generate', requireAuth, async (req, res) => {
 
   try {
     const metafields    = await shopify.getProductMetafields(productId);
-    const prompt        = customPrompt || await buildPrompt(productTitle, collectionTitle, metafields);
+    const prompt        = customPrompt || await buildPrompt(productTitle, collectionTitle, metafields, promptHint);
     const productBuffer = await shopify.downloadImageBuffer(productImageUrl);
     const genBuffer     = await generateProductImage(productBuffer, prompt);
     const base64        = await addTextOverlay(genBuffer, metafields);
@@ -280,14 +281,14 @@ app.post('/api/generate-batch', requireAuth, async (req, res) => {
   send({ type: 'total', total: toProcess.length });
 
   for (let i = 0; i < toProcess.length; i++) {
-    const { productId, productTitle, productImageUrl } = toProcess[i];
+    const { productId, productTitle, productImageUrl, promptHint } = toProcess[i];
     if (!productImageUrl) {
       send({ type: 'error', productId, productTitle, msg: 'Sin imagen en Shopify', done: i + 1, total: toProcess.length });
       continue;
     }
     try {
       const metafields    = await shopify.getProductMetafields(productId);
-      const prompt        = await buildPrompt(productTitle, collectionTitle, metafields);
+      const prompt        = await buildPrompt(productTitle, collectionTitle, metafields, promptHint);
       const productBuffer = await shopify.downloadImageBuffer(productImageUrl);
       const genBuffer     = await generateProductImage(productBuffer, prompt);
       const base64        = await addTextOverlay(genBuffer, metafields);
@@ -508,6 +509,13 @@ textarea{resize:vertical;line-height:1.5}
         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         Cargar productos
       </button>
+    </div>
+
+    <div class="filter-card" id="hint-card" style="display:none;flex-direction:column;align-items:stretch;gap:8px">
+      <label style="font-size:12px;font-weight:600;color:#6b5a4e;text-transform:uppercase;letter-spacing:.5px">
+        Instrucción adicional al prompt <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#9a8a7a;font-size:11px">(opcional — se suma al contexto de Claude para todos los productos)</span>
+      </label>
+      <textarea id="catalog-prompt-hint" rows="2" style="resize:vertical;font-size:13px;color:#4a3a2e" placeholder="Ej: colócalos en un living como mesa de apoyo, no en dormitorio"></textarea>
     </div>
 
     <div class="batch-bar" id="batch-bar" style="display:none">
