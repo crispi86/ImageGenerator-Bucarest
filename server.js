@@ -462,6 +462,17 @@ textarea{resize:vertical;line-height:1.5}
 .mkt-result{margin-top:28px;display:none}
 .mkt-result img{width:100%;border-radius:8px;display:block;margin-bottom:14px;aspect-ratio:1/1;object-fit:cover}
 .mkt-divider{border:none;border-top:1px solid #e8e0d8;margin:24px 0}
+.mkt-autocomplete{position:relative}
+.mkt-dropdown{position:absolute;top:calc(100% + 2px);left:0;right:0;background:white;border:1px solid #c8bfb5;border-radius:6px;max-height:260px;overflow-y:auto;z-index:60;box-shadow:0 6px 16px rgba(0,0,0,.1);display:none}
+.mkt-dropdown-item{padding:10px 14px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0ece6;line-height:1.4}
+.mkt-dropdown-item:hover{background:#f5f0eb}
+.mkt-dropdown-item:last-child{border-bottom:none}
+.mkt-dropdown-empty{padding:10px 14px;font-size:13px;color:#9a8a7a}
+.mkt-selected-chip{display:none;align-items:center;gap:10px;margin-top:8px;padding:8px 12px;background:#eef4f0;border:1px solid #c2d9cc;border-radius:6px}
+.mkt-selected-chip img{width:36px;height:36px;object-fit:contain;border-radius:4px;background:white;border:1px solid #ddd;flex-shrink:0}
+.mkt-selected-chip-name{flex:1;font-size:12px;font-weight:600;color:#2c4a3e;line-height:1.3}
+.mkt-clear{background:none;border:none;cursor:pointer;color:#7a9a8a;font-size:16px;line-height:1;padding:2px 4px;flex-shrink:0}
+.mkt-clear:hover{color:#2c4a3e}
 </style>
 </head>
 <body>
@@ -528,15 +539,17 @@ textarea{resize:vertical;line-height:1.5}
       <h2>Generar imagen para marketing</h2>
       <p>Selecciona un producto de la colección cargada, escribe o sugiere un prompt, y agrega texto opcional que aparecerá en la imagen. La imagen generada se puede descargar directamente.</p>
 
-      <div class="form-group" style="margin-bottom:8px">
-        <label>Buscar producto</label>
-        <input type="text" id="mkt-search" placeholder="Escribe parte del título..." oninput="filterMarketingProducts()" autocomplete="off">
-      </div>
       <div class="form-group" style="margin-bottom:20px">
-        <select id="mkt-product-select" onchange="onMarketingProductChange()" size="1">
-          <option value="">— Cargando productos... —</option>
-        </select>
-        <span id="mkt-count" style="font-size:11px;color:#9a8a7a;margin-top:4px"></span>
+        <label>Buscar producto por título</label>
+        <div class="mkt-autocomplete">
+          <input type="text" id="mkt-search" placeholder="Escribe parte del título..." oninput="filterMarketingProducts()" autocomplete="off">
+          <div id="mkt-dropdown" class="mkt-dropdown"></div>
+        </div>
+        <div id="mkt-selected-chip" class="mkt-selected-chip">
+          <img id="mkt-chip-img" src="" alt="">
+          <span id="mkt-chip-name" class="mkt-selected-chip-name"></span>
+          <button class="mkt-clear" onclick="clearMarketingProduct()" title="Cambiar producto">✕</button>
+        </div>
       </div>
 
       <div class="mkt-product-row">

@@ -4,14 +4,21 @@ let productsData      = [];
 let currentCollection = null;
 const productStates   = {};
 const generationLog   = [];
-let marketingResultBase64 = null;
-let allProductsData   = [];
-let allProductsLoaded = false;
+let marketingResultBase64    = null;
+let allProductsData          = [];
+let allProductsLoaded        = false;
+let selectedMarketingProduct = null; // { id, title, image }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   loadCollections();
   loadStats();
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.mkt-autocomplete')) {
+      const dd = document.getElementById('mkt-dropdown');
+      if (dd) dd.style.display = 'none';
+    }
+  });
 });
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -399,94 +406,101 @@ function exportLog() {
 
 // ── Marketing tab ─────────────────────────────────────────────────────────────
 async function loadAllProducts() {
-  const sel = document.getElementById('mkt-product-select');
-  sel.innerHTML = '<option value="">Cargando todos los productos...</option>';
+  const inp = document.getElementById('mkt-search');
+  if (inp) inp.placeholder = 'Cargando productos...';
   try {
     const data = await api('/api/all-products');
     allProductsData   = data.products;
     allProductsLoaded = true;
-    filterMarketingProducts();
+    if (inp) inp.placeholder = `Buscar entre ${allProductsData.length} productos...`;
   } catch (e) {
-    sel.innerHTML = '<option value="">Error al cargar productos</option>';
+    if (inp) inp.placeholder = 'Error al cargar — recarga la página';
     showToast('Error cargando productos: ' + e.message, true);
   }
 }
 
 function filterMarketingProducts() {
-  const query    = (document.getElementById('mkt-search')?.value || '').trim().toLowerCase();
-  const filtered = query
-    ? allProductsData.filter(p => p.title.toLowerCase().includes(query))
-    : allProductsData;
+  const query = document.getElementById('mkt-search').value.trim();
+  const dd    = document.getElementById('mkt-dropdown');
+  if (!query || query.length < 2) { dd.style.display = 'none'; return; }
 
-  const sel   = document.getElementById('mkt-product-select');
-  const count = document.getElementById('mkt-count');
+  const q        = query.toLowerCase();
+  const filtered = allProductsData.filter(p => p.title.toLowerCase().includes(q)).slice(0, 20);
 
-  sel.innerHTML = '<option value="">— Selecciona un producto —</option>' +
-    filtered.slice(0, 150).map(p =>
-      `<option value="${p.id}" data-image="${escHtml(p.image || '')}" data-title="${escHtml(p.title)}">${escHtml(p.title)}</option>`
+  if (!filtered.length) {
+    dd.innerHTML = '<div class="mkt-dropdown-empty">Sin resultados</div>';
+  } else {
+    dd.innerHTML = filtered.map(p =>
+      `<div class="mkt-dropdown-item"
+        data-id="${escHtml(String(p.id))}"
+        data-title="${escHtml(p.title)}"
+        data-image="${escHtml(p.image || '')}"
+        onclick="selectMarketingProduct(this)">${escHtml(p.title)}</div>`
     ).join('');
-
-  if (count) {
-    count.textContent = filtered.length > 150
-      ? `Mostrando 150 de ${filtered.length} resultados — refina la búsqueda`
-      : filtered.length === allProductsData.length
-        ? `${allProductsData.length} productos`
-        : `${filtered.length} resultado${filtered.length !== 1 ? 's' : ''}`;
   }
-
-  document.getElementById('btn-mkt-generate').disabled = true;
-  document.getElementById('mkt-thumb-wrap').innerHTML = '<div class="mkt-product-thumb-empty">🖼</div>';
+  dd.style.display = 'block';
 }
 
-function onMarketingProductChange() {
-  const sel    = document.getElementById('mkt-product-select');
-  const opt    = sel.options[sel.selectedIndex];
-  const imgUrl = opt?.dataset?.image || '';
-  const wrap   = document.getElementById('mkt-thumb-wrap');
+function selectMarketingProduct(el) {
+  selectedMarketingProduct = {
+    id:    el.dataset.id,
+    title: el.dataset.title,
+    image: el.dataset.image,
+  };
+  document.getElementById('mkt-search').value   = selectedMarketingProduct.title;
+  document.getElementById('mkt-dropdown').style.display = 'none';
 
-  wrap.innerHTML = imgUrl
-    ? `<img class="mkt-product-thumb" src="${escHtml(imgUrl)}" alt="">`
+  const chip = document.getElementById('mkt-selected-chip');
+  document.getElementById('mkt-chip-img').src          = selectedMarketingProduct.image;
+  document.getElementById('mkt-chip-name').textContent = selectedMarketingProduct.title;
+  chip.style.display = 'flex';
+
+  const wrap = document.getElementById('mkt-thumb-wrap');
+  wrap.innerHTML = selectedMarketingProduct.image
+    ? `<img class="mkt-product-thumb" src="${escHtml(selectedMarketingProduct.image)}" alt="">`
     : `<div class="mkt-product-thumb-empty">🖼</div>`;
 
-  document.getElementById('btn-mkt-generate').disabled = !sel.value;
-  document.getElementById('mkt-result').style.display = 'none';
+  document.getElementById('btn-mkt-generate').disabled = false;
+  document.getElementById('mkt-result').style.display  = 'none';
+}
+
+function clearMarketingProduct() {
+  selectedMarketingProduct = null;
+  document.getElementById('mkt-search').value          = '';
+  document.getElementById('mkt-selected-chip').style.display = 'none';
+  document.getElementById('mkt-thumb-wrap').innerHTML  = '<div class="mkt-product-thumb-empty">🖼</div>';
+  document.getElementById('btn-mkt-generate').disabled = true;
+  document.getElementById('mkt-result').style.display  = 'none';
 }
 
 async function suggestMarketingPrompt() {
-  const sel = document.getElementById('mkt-product-select');
-  if (!sel.value) {
+  if (!selectedMarketingProduct) {
     showToast('Selecciona un producto primero', true);
     return;
   }
-  const opt = sel.options[sel.selectedIndex];
   const btn = document.getElementById('btn-suggest');
-  btn.disabled = true;
+  btn.disabled    = true;
   btn.textContent = '⌛';
-
   try {
     const data = await api('/api/suggest-prompt', 'POST', {
-      productTitle:    opt.dataset.title,
+      productTitle:    selectedMarketingProduct.title,
       collectionTitle: 'General',
-      productId:       sel.value,
+      productId:       selectedMarketingProduct.id,
     });
     document.getElementById('mkt-prompt').value = data.prompt;
   } catch (e) {
     showToast('Error: ' + e.message, true);
   } finally {
-    btn.disabled = false;
+    btn.disabled    = false;
     btn.textContent = '✨ Sugerir con IA';
   }
 }
 
 async function generateMarketing() {
-  const sel = document.getElementById('mkt-product-select');
-  const opt = sel.options[sel.selectedIndex];
-  const productImageUrl = opt?.dataset?.image || '';
+  if (!selectedMarketingProduct?.image) { showToast('Selecciona un producto primero', true); return; }
   const prompt      = document.getElementById('mkt-prompt').value.trim();
   const overlayText = document.getElementById('mkt-overlay-text').value.trim();
-
-  if (!productImageUrl) { showToast('El producto no tiene imagen en Shopify', true); return; }
-  if (!prompt)          { showToast('Escribe un prompt para la imagen', true); return; }
+  if (!prompt) { showToast('Escribe un prompt para la imagen', true); return; }
 
   const btn = document.getElementById('btn-mkt-generate');
   btn.disabled = true;
@@ -494,7 +508,7 @@ async function generateMarketing() {
 
   try {
     const data = await api('/api/generate-marketing', 'POST', {
-      productImageUrl,
+      productImageUrl: selectedMarketingProduct.image,
       prompt,
       overlayText: overlayText || null,
     });
@@ -512,8 +526,7 @@ async function generateMarketing() {
 
 function downloadMarketingImage() {
   if (!marketingResultBase64) return;
-  const sel  = document.getElementById('mkt-product-select');
-  const name = sel.options[sel.selectedIndex]?.dataset?.title || 'marketing';
+  const name = selectedMarketingProduct?.title || 'marketing';
   const filename = 'bucarest-mkt-' + name.toLowerCase().replace(/\s+/g, '-').slice(0, 30) + '-' + Date.now() + '.png';
   const a = document.createElement('a');
   a.href = 'data:image/png;base64,' + marketingResultBase64;
