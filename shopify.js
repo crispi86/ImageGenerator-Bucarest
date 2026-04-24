@@ -79,6 +79,7 @@ async function getProductsByCollection(collectionId) {
     status: p.status,
     image: p.images?.[0]?.src || null,
     imageCount: p.images?.length || 0,
+    hasGeneratedImage: p.images?.some(img => img.alt?.startsWith('Imagen contextual generada para')) || false,
   }));
 }
 

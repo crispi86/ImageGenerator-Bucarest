@@ -459,6 +459,8 @@ textarea{resize:vertical;line-height:1.5}
 .log-title{font-size:14px;font-weight:600;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
 .log-entry{font-size:12px;padding:6px 0;border-bottom:1px solid #f0ece6;display:flex;gap:10px;align-items:center}
 .log-entry:last-child{border-bottom:none}
+.ai-badge{position:absolute;top:8px;right:8px;background:#2d7a4e;color:white;font-size:10px;font-weight:700;padding:3px 7px;border-radius:10px;z-index:2;pointer-events:none}
+.product-card.has-ai{border:2px solid #a8d5bb}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid #ddd;border-top-color:#2c4a3e;border-radius:50%;animation:spin .6s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .toast{position:fixed;bottom:24px;right:24px;background:#2c4a3e;color:white;padding:12px 20px;border-radius:8px;font-size:13px;z-index:999;display:none}
@@ -532,6 +534,13 @@ textarea{resize:vertical;line-height:1.5}
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;font-size:13px;font-weight:normal">
         <input type="checkbox" id="select-all" onchange="toggleSelectAll(this)" style="width:16px;height:16px;accent-color:#2c4a3e">
         Seleccionar todo
+      </label>
+      <button class="btn btn-secondary btn-sm" onclick="selectWithoutGenerated()">
+        Seleccionar sin IA aprobada
+      </button>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;font-size:13px;font-weight:normal">
+        <input type="checkbox" id="hide-generated" onchange="toggleHideGenerated(this)" style="width:16px;height:16px;accent-color:#2c4a3e">
+        Ocultar con IA aprobada
       </label>
       <button class="btn btn-primary btn-sm" id="btn-batch" onclick="generateBatch()" disabled>
         Generar seleccionados

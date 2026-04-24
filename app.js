@@ -94,10 +94,15 @@ function renderCard(p) {
     ? `<img src="${p.image}" alt="${escHtml(p.title)}" loading="lazy">`
     : `<div class="card-img-placeholder">🖼</div>`;
 
-  return `<div class="product-card" id="card-${p.id}" data-id="${p.id}">
+  const aiBadge = p.hasGeneratedImage
+    ? `<div class="ai-badge" title="Ya tiene imagen IA aprobada">&#10003; IA aprobada</div>`
+    : '';
+
+  return `<div class="product-card${p.hasGeneratedImage ? ' has-ai' : ''}" id="card-${p.id}" data-id="${p.id}" data-has-ai="${p.hasGeneratedImage ? '1' : '0'}">
   <div class="card-select">
     <input type="checkbox" class="p-check" data-id="${p.id}" onchange="onCheckboxChange()">
   </div>
+  ${aiBadge}
   <div class="card-img-wrap">${imgHtml}</div>
   <div class="card-body">
     <div class="card-title">${escHtml(p.title)}</div>
@@ -340,6 +345,21 @@ function onCheckboxChange() { updateBatchControls(); }
 function toggleSelectAll(chk) {
   document.querySelectorAll('.p-check').forEach(c => c.checked = chk.checked);
   updateBatchControls();
+}
+
+function selectWithoutGenerated() {
+  document.querySelectorAll('.p-check').forEach(c => {
+    const card = document.getElementById('card-' + c.dataset.id);
+    c.checked = card && card.dataset.hasAi !== '1';
+  });
+  document.getElementById('select-all').checked = false;
+  updateBatchControls();
+}
+
+function toggleHideGenerated(chk) {
+  document.querySelectorAll('.product-card.has-ai').forEach(card => {
+    card.style.display = chk.checked ? 'none' : '';
+  });
 }
 
 function updateBatchControls() {
