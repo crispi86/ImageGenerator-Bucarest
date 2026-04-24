@@ -80,53 +80,128 @@ app.get('/shopify/callback', async (req, res) => {
 const generatedImages = {}; // { productId: base64 }
 
 // ── Core AI logic ─────────────────────────────────────────────────────────────
-async function buildEditPrompt(productTitle, collectionTitle, metafields) {
-  const context  = getContext(collectionTitle, productTitle);
+async function buildBackgroundPrompt(productTitle, collectionTitle, metafields) {
+  const context  = getContext(collectionTitle, productTitle, metafields);
   const sizeDesc = getSizeDescription(metafields.alto, metafields.ancho, collectionTitle);
-
-  const dims = [];
-  if (metafields.alto)        dims.push(`${metafields.alto}cm tall`);
-  if (metafields.ancho)       dims.push(`${metafields.ancho}cm wide`);
-  if (metafields.profundidad) dims.push(`${metafields.profundidad}cm deep`);
-  const dimStr = dims.length ? dims.join(', ') : null;
 
   const msg = await anthropic.messages.create({
     model: 'claude-opus-4-7',
     max_tokens: 300,
     messages: [{
       role: 'user',
-      content: `Write an image editing prompt for gpt-image-1. The AI will receive the actual photo of this antique/art piece and must keep the object EXACTLY as it appears — same shape, color, style, patina, details — while placing it in a new aspirational home setting.
+      content: `Write a DALL-E 3 prompt for an empty interior scene. A "${productTitle}" (${collectionTitle}) will be composited into it afterwards, so the scene must have a clear, unobstructed placement area where this type of object naturally belongs.
 
-Product: "${productTitle}"
-Collection: ${collectionTitle}
-${dimStr ? `Dimensions: ${dimStr}` : ''}
-${sizeDesc ? `Scale: ${sizeDesc}` : ''}
-New scene: ${context}
+Context: ${context}
+${sizeDesc ? `The object is a ${sizeDesc}` : ''}
 
-Write a concise editing instruction (max 120 words) that:
-- Starts with "Keep this exact object unchanged."
-- Instructs to replace only the background/environment
-- Describes the new scene: warm natural side light, neutral contemporary interior, aspirational atmosphere
-- Neutral environment colors (warm whites, soft grays, natural wood) so the product stands out
+Requirements:
+- Empty scene — NO object in the placement area, leave it visually open and ready
+- Warm natural light from the side
+- Neutral contemporary aspirational atmosphere
+- Colors: warm whites, soft grays, natural wood tones
 - No people, no clutter
-- Photorealistic editorial quality
-- Write in English, directly as the instruction`,
+- Photorealistic editorial interior photography
+- 100 words max, start directly with the scene description`,
     }],
   });
 
   return msg.content[0].text.trim();
 }
 
-async function editProductImage(imageBuffer, prompt) {
-  const { toFile } = require('openai');
-  const imageFile  = await toFile(imageBuffer, 'product.jpg', { type: 'image/jpeg' });
-  const response   = await getOpenAI().images.edit({
-    model:  'gpt-image-1',
-    image:  imageFile,
-    prompt,
-    size:   '1024x1024',
+async function removeBackground(imageBuffer) {
+  if (!process.env.REMOVE_BG_API_KEY) throw new Error('REMOVE_BG_API_KEY no configurada.');
+  const boundary = 'FormBoundary' + Math.random().toString(36).slice(2);
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="image_file"; filename="product.jpg"\r\nContent-Type: image/jpeg\r\n\r\n`),
+    imageBuffer,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.remove.bg',
+      path:     '/v1.0/removebg',
+      method:   'POST',
+      headers: {
+        'X-Api-Key':    process.env.REMOVE_BG_API_KEY,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': body.length,
+      },
+    }, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        if (res.statusCode === 200) resolve(buf);
+        else reject(new Error('remove.bg: ' + buf.toString().slice(0, 200)));
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
   });
-  return response.data[0].b64_json;
+}
+
+async function generateBackground(prompt) {
+  const response = await getOpenAI().images.generate({
+    model:   'dall-e-3',
+    prompt,
+    size:    '1024x1024',
+    quality: 'standard',
+    n:       1,
+  });
+  return shopify.downloadImageBuffer(response.data[0].url);
+}
+
+function buildOverlaySVG(metafields) {
+  const parts = [];
+  if (metafields.alto)        parts.push(`Alto: ${metafields.alto} cm`);
+  if (metafields.ancho)       parts.push(`Ancho: ${metafields.ancho} cm`);
+  if (metafields.profundidad) parts.push(`Prof.: ${metafields.profundidad} cm`);
+  const dimLine = parts.join('   |   ');
+
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  return `<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.62"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="800" width="1024" height="224" fill="url(#g)"/>
+  ${dimLine ? `<text x="512" y="882" font-family="Georgia, 'Times New Roman', serif" font-size="20" fill="white" text-anchor="middle" letter-spacing="2">${esc(dimLine)}</text>` : ''}
+  <text x="512" y="924" font-family="Georgia, 'Times New Roman', serif" font-size="14" fill="rgba(255,255,255,0.88)" text-anchor="middle">Interpretación realizada con IA — La pieza puede presentar leves diferencias</text>
+  <text x="512" y="950" font-family="Georgia, 'Times New Roman', serif" font-size="13" fill="rgba(255,255,255,0.68)" text-anchor="middle">Para más detalle, ver fotos anteriores</text>
+</svg>`;
+}
+
+async function compositeImages(bgBuffer, productPngBuffer, collectionTitle, metafields) {
+  const sharp = require('sharp');
+  const BG    = 1024;
+
+  const wallArt = ['Chilena contemporánea','Chilena clásica','Europea clásica','Extranjera contemporánea','Religiosa','Alfombras y tapicerías','Espejos'];
+  const isWall  = wallArt.includes(collectionTitle);
+
+  const sizeDesc  = getSizeDescription(metafields.alto, metafields.ancho, collectionTitle);
+  const factor    = sizeDesc?.includes('large') ? 0.62 : sizeDesc?.includes('small') ? 0.28 : 0.48;
+  const maxDim    = Math.round(BG * factor);
+
+  const meta      = await sharp(productPngBuffer).metadata();
+  const resizeOpt = meta.width >= meta.height ? { width: maxDim } : { height: maxDim };
+  const resized   = await sharp(productPngBuffer).resize(resizeOpt).png().toBuffer();
+  const gravity   = isWall ? 'centre' : 'south';
+  const overlaySvg = Buffer.from(buildOverlaySVG(metafields));
+
+  const result = await sharp(bgBuffer)
+    .resize(BG, BG)
+    .composite([
+      { input: resized,     gravity },
+      { input: overlaySvg, top: 0, left: 0 },
+    ])
+    .png()
+    .toBuffer();
+
+  return result.toString('base64');
 }
 
 // ── API routes ────────────────────────────────────────────────────────────────
@@ -158,20 +233,24 @@ app.post('/api/generate', requireAuth, async (req, res) => {
     return res.status(503).json({ error: 'OpenAI API key no configurada.' });
 
   try {
-    const metafields   = await shopify.getProductMetafields(productId);
-    const prompt       = await buildEditPrompt(productTitle, collectionTitle, metafields);
-    const imageBuffer  = await shopify.downloadImageBuffer(productImageUrl);
-    const base64       = await editProductImage(imageBuffer, prompt);
+    const metafields    = await shopify.getProductMetafields(productId);
+    const bgPrompt      = await buildBackgroundPrompt(productTitle, collectionTitle, metafields);
+    const productBuffer = await shopify.downloadImageBuffer(productImageUrl);
+    const [noBgBuffer, bgBuffer] = await Promise.all([
+      removeBackground(productBuffer),
+      generateBackground(bgPrompt),
+    ]);
+    const base64 = await compositeImages(bgBuffer, noBgBuffer, collectionTitle, metafields);
 
     generatedImages[productId] = base64;
     stats.generated++;
-    stats.costUSD = Math.round((stats.costUSD + 0.04) * 100) / 100;
+    stats.costUSD = Math.round((stats.costUSD + 0.06) * 100) / 100;
 
     generationLog.push({
-      productId, productTitle, collectionTitle, prompt, status: 'generated', ts: new Date().toISOString(),
+      productId, productTitle, collectionTitle, prompt: bgPrompt, status: 'generated', ts: new Date().toISOString(),
     });
 
-    res.json({ imageUrl: `/api/generated-image/${productId}`, prompt, cost: 0.04 });
+    res.json({ imageUrl: `/api/generated-image/${productId}`, prompt: bgPrompt, cost: 0.06 });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -205,21 +284,25 @@ app.post('/api/generate-batch', requireAuth, async (req, res) => {
       continue;
     }
     try {
-      const metafields  = await shopify.getProductMetafields(productId);
-      const prompt      = await buildEditPrompt(productTitle, collectionTitle, metafields);
-      const imageBuffer = await shopify.downloadImageBuffer(productImageUrl);
-      const base64      = await editProductImage(imageBuffer, prompt);
+      const metafields    = await shopify.getProductMetafields(productId);
+      const bgPrompt      = await buildBackgroundPrompt(productTitle, collectionTitle, metafields);
+      const productBuffer = await shopify.downloadImageBuffer(productImageUrl);
+      const [noBgBuffer, bgBuffer] = await Promise.all([
+        removeBackground(productBuffer),
+        generateBackground(bgPrompt),
+      ]);
+      const base64 = await compositeImages(bgBuffer, noBgBuffer, collectionTitle, metafields);
 
       generatedImages[productId] = base64;
       stats.generated++;
-      stats.costUSD = Math.round((stats.costUSD + 0.04) * 100) / 100;
+      stats.costUSD = Math.round((stats.costUSD + 0.06) * 100) / 100;
 
       generationLog.push({
-        productId, productTitle, collectionTitle, prompt, status: 'generated', ts: new Date().toISOString(),
+        productId, productTitle, collectionTitle, prompt: bgPrompt, status: 'generated', ts: new Date().toISOString(),
       });
 
       const imageUrl = `/api/generated-image/${productId}`;
-      send({ type: 'result', productId, productTitle, imageUrl, prompt, done: i + 1, total: toProcess.length });
+      send({ type: 'result', productId, productTitle, imageUrl, prompt: bgPrompt, done: i + 1, total: toProcess.length });
     } catch (e) {
       send({ type: 'error', productId, productTitle, msg: e.message, done: i + 1, total: toProcess.length });
     }

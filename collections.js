@@ -19,14 +19,18 @@ const TARGET_COLLECTIONS = [
   'Religiosa',
 ];
 
-function getContext(collectionTitle, productTitle) {
-  const t = (productTitle || '').toLowerCase();
+function getContext(collectionTitle, productTitle, metafields = {}) {
+  const t    = (productTitle || '').toLowerCase();
+  const alto = parseFloat(metafields.alto);
+
   switch (collectionTitle) {
     case 'Alfombras y tapicerías':
       if (/tapiz|tapicería/.test(t))
         return 'hung on the wall of a contemporary elegant living room';
       return 'laid on the floor of a spacious modern living room with a neutral sofa and natural light';
     case 'Espejos':
+      if (alto > 130) return 'leaning against or mounted on a full wall in a modern luminous living room or bedroom, floor-to-ceiling scale';
+      if (alto > 80)  return 'mounted on the wall of a modern luminous bedroom or hallway';
       return 'above a console table in a modern luminous entrance hall or bedroom';
     case 'Lámparas y apliques':
       if (/aplique/.test(t))
