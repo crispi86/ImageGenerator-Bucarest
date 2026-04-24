@@ -115,6 +115,7 @@ async function generateSingle(productId, btn) {
       productId,
       productTitle: product.title,
       collectionTitle: currentCollection.title,
+      productImageUrl: product.image,
     });
     productStates[productId] = { imageUrl: data.imageUrl, prompt: data.prompt };
     setCardState(productId, 'preview');
@@ -147,7 +148,7 @@ async function generateBatch() {
 
   const prods = selected.map(id => {
     const p = productsData.find(pr => String(pr.id) === String(id));
-    return { productId: id, productTitle: p?.title || '' };
+    return { productId: id, productTitle: p?.title || '', productImageUrl: p?.image || null };
   });
 
   try {
@@ -223,7 +224,6 @@ async function approveImage(productId) {
   try {
     await api('/api/approve', 'POST', {
       productId,
-      imageUrl: state.imageUrl,
       productTitle: product?.title || '',
     });
     setCardState(productId, 'approved');
@@ -238,8 +238,7 @@ async function approveImage(productId) {
 }
 
 async function rejectImage(productId) {
-  const state = productStates[productId];
-  await api('/api/reject', 'POST', { productId, imageUrl: state?.imageUrl });
+  await api('/api/reject', 'POST', { productId });
   updateLogEntry(productId, state?.imageUrl, 'rejected');
   setCardState(productId, 'rejected');
   document.getElementById('preview-' + productId).style.display = 'none';

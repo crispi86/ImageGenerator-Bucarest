@@ -76,8 +76,11 @@ app.get('/shopify/callback', async (req, res) => {
   }
 });
 
+// ── In-memory image store ─────────────────────────────────────────────────────
+const generatedImages = {}; // { productId: base64 }
+
 // ── Core AI logic ─────────────────────────────────────────────────────────────
-async function buildDallePrompt(productTitle, collectionTitle, metafields) {
+async function buildEditPrompt(productTitle, collectionTitle, metafields) {
   const context  = getContext(collectionTitle, productTitle);
   const sizeDesc = getSizeDescription(metafields.alto, metafields.ancho, collectionTitle);
 
@@ -89,43 +92,41 @@ async function buildDallePrompt(productTitle, collectionTitle, metafields) {
 
   const msg = await anthropic.messages.create({
     model: 'claude-opus-4-7',
-    max_tokens: 400,
+    max_tokens: 300,
     messages: [{
       role: 'user',
-      content: `Write a DALL-E 3 image generation prompt for this antique/art piece sold by Bucarest Art & Antiques in Santiago, Chile.
+      content: `Write an image editing prompt for gpt-image-1. The AI will receive the actual photo of this antique/art piece and must keep the object EXACTLY as it appears — same shape, color, style, patina, details — while placing it in a new aspirational home setting.
 
 Product: "${productTitle}"
 Collection: ${collectionTitle}
 ${dimStr ? `Dimensions: ${dimStr}` : ''}
 ${sizeDesc ? `Scale: ${sizeDesc}` : ''}
-Placement: ${context}
+New scene: ${context}
 
-Requirements:
-- Photorealistic editorial interior photography, high quality
-- The product is the clear protagonist, sharp and detailed
-- Warm natural light from a side window
-- Neutral, contemporary, aspirational atmosphere — buyer imagines this in their own home
-- Environment colors: warm whites, soft grays, natural wood tones — never competing with the product
-- No clutter, no people, never museographic or academic
-- Show accurate proportions relative to the space
-- Product must look exactly like an antique/vintage/art piece — aged, authentic, unique
-- In English, 150–200 words
-- Begin directly with the visual scene, no preamble or explanation`,
+Write a concise editing instruction (max 120 words) that:
+- Starts with "Keep this exact object unchanged."
+- Instructs to replace only the background/environment
+- Describes the new scene: warm natural side light, neutral contemporary interior, aspirational atmosphere
+- Neutral environment colors (warm whites, soft grays, natural wood) so the product stands out
+- No people, no clutter
+- Photorealistic editorial quality
+- Write in English, directly as the instruction`,
     }],
   });
 
   return msg.content[0].text.trim();
 }
 
-async function generateImage(prompt) {
-  const response = await getOpenAI().images.generate({
-    model:   'dall-e-3',
+async function editProductImage(imageBuffer, prompt) {
+  const { toFile } = require('openai');
+  const imageFile  = await toFile(imageBuffer, 'product.jpg', { type: 'image/jpeg' });
+  const response   = await getOpenAI().images.edit({
+    model:  'gpt-image-1',
+    image:  imageFile,
     prompt,
-    size:    '1024x1024',
-    quality: 'standard',
-    n:       1,
+    size:   '1024x1024',
   });
-  return response.data[0].url;
+  return response.data[0].b64_json;
 }
 
 // ── API routes ────────────────────────────────────────────────────────────────
@@ -146,31 +147,41 @@ app.get('/api/products', requireAuth, async (req, res) => {
 });
 
 app.post('/api/generate', requireAuth, async (req, res) => {
-  const { productId, productTitle, collectionTitle } = req.body;
+  const { productId, productTitle, collectionTitle, productImageUrl } = req.body;
   if (!productId || !productTitle || !collectionTitle)
     return res.status(400).json({ error: 'Faltan parámetros' });
+  if (!productImageUrl)
+    return res.status(400).json({ error: 'Este producto no tiene imagen. Agrega una foto en Shopify primero.' });
   if (stats.generated >= DAILY_LIMIT)
     return res.status(429).json({ error: `Límite diario de ${DAILY_LIMIT} imágenes alcanzado.` });
   if (!process.env.OPENAI_API_KEY)
     return res.status(503).json({ error: 'OpenAI API key no configurada.' });
 
   try {
-    const metafields = await shopify.getProductMetafields(productId);
-    const prompt     = await buildDallePrompt(productTitle, collectionTitle, metafields);
-    const imageUrl   = await generateImage(prompt);
+    const metafields   = await shopify.getProductMetafields(productId);
+    const prompt       = await buildEditPrompt(productTitle, collectionTitle, metafields);
+    const imageBuffer  = await shopify.downloadImageBuffer(productImageUrl);
+    const base64       = await editProductImage(imageBuffer, prompt);
 
+    generatedImages[productId] = base64;
     stats.generated++;
     stats.costUSD = Math.round((stats.costUSD + 0.04) * 100) / 100;
 
     generationLog.push({
-      productId, productTitle, collectionTitle, prompt,
-      imageUrl, status: 'generated', ts: new Date().toISOString(),
+      productId, productTitle, collectionTitle, prompt, status: 'generated', ts: new Date().toISOString(),
     });
 
-    res.json({ imageUrl, prompt, cost: 0.04 });
+    res.json({ imageUrl: `/api/generated-image/${productId}`, prompt, cost: 0.04 });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+app.get('/api/generated-image/:productId', requireAuth, (req, res) => {
+  const base64 = generatedImages[req.params.productId];
+  if (!base64) return res.status(404).send('No encontrada');
+  res.setHeader('Content-Type', 'image/png');
+  res.send(Buffer.from(base64, 'base64'));
 });
 
 app.post('/api/generate-batch', requireAuth, async (req, res) => {
@@ -188,20 +199,26 @@ app.post('/api/generate-batch', requireAuth, async (req, res) => {
   send({ type: 'total', total: toProcess.length });
 
   for (let i = 0; i < toProcess.length; i++) {
-    const { productId, productTitle } = toProcess[i];
+    const { productId, productTitle, productImageUrl } = toProcess[i];
+    if (!productImageUrl) {
+      send({ type: 'error', productId, productTitle, msg: 'Sin imagen en Shopify', done: i + 1, total: toProcess.length });
+      continue;
+    }
     try {
-      const metafields = await shopify.getProductMetafields(productId);
-      const prompt     = await buildDallePrompt(productTitle, collectionTitle, metafields);
-      const imageUrl   = await generateImage(prompt);
+      const metafields  = await shopify.getProductMetafields(productId);
+      const prompt      = await buildEditPrompt(productTitle, collectionTitle, metafields);
+      const imageBuffer = await shopify.downloadImageBuffer(productImageUrl);
+      const base64      = await editProductImage(imageBuffer, prompt);
 
+      generatedImages[productId] = base64;
       stats.generated++;
       stats.costUSD = Math.round((stats.costUSD + 0.04) * 100) / 100;
 
       generationLog.push({
-        productId, productTitle, collectionTitle, prompt,
-        imageUrl, status: 'generated', ts: new Date().toISOString(),
+        productId, productTitle, collectionTitle, prompt, status: 'generated', ts: new Date().toISOString(),
       });
 
+      const imageUrl = `/api/generated-image/${productId}`;
       send({ type: 'result', productId, productTitle, imageUrl, prompt, done: i + 1, total: toProcess.length });
     } catch (e) {
       send({ type: 'error', productId, productTitle, msg: e.message, done: i + 1, total: toProcess.length });
@@ -214,17 +231,18 @@ app.post('/api/generate-batch', requireAuth, async (req, res) => {
 });
 
 app.post('/api/approve', requireAuth, async (req, res) => {
-  const { productId, imageUrl, productTitle } = req.body;
-  if (!productId || !imageUrl) return res.status(400).json({ error: 'Faltan parámetros' });
+  const { productId, productTitle } = req.body;
+  if (!productId) return res.status(400).json({ error: 'Faltan parámetros' });
+  const base64 = generatedImages[productId];
+  if (!base64) return res.status(400).json({ error: 'Imagen no encontrada. Regenera primero.' });
   try {
-    const buffer   = await shopify.downloadImageBuffer(imageUrl);
-    const base64   = buffer.toString('base64');
-    const filename = `bucarest-generated-${productId}-${Date.now()}.jpg`;
+    const filename = `bucarest-generated-${productId}-${Date.now()}.png`;
     const alt      = `Imagen contextual generada para ${productTitle}`;
     const image    = await shopify.uploadProductImage(productId, base64, filename, alt);
 
     stats.approved++;
-    const entry = generationLog.find(e => e.productId == productId && e.imageUrl === imageUrl);
+    delete generatedImages[productId];
+    const entry = generationLog.find(e => String(e.productId) === String(productId));
     if (entry) entry.status = 'approved';
 
     res.json({ success: true, image });
@@ -234,9 +252,10 @@ app.post('/api/approve', requireAuth, async (req, res) => {
 });
 
 app.post('/api/reject', requireAuth, (req, res) => {
-  const { productId, imageUrl } = req.body;
+  const { productId } = req.body;
   stats.rejected++;
-  const entry = generationLog.find(e => e.productId == productId && e.imageUrl === imageUrl);
+  delete generatedImages[productId];
+  const entry = generationLog.find(e => String(e.productId) === String(productId));
   if (entry) entry.status = 'rejected';
   res.json({ success: true });
 });
