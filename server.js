@@ -128,8 +128,10 @@ function buildOverlaySVG(metafields) {
   if (metafields.alto)        parts.push(`Alto: ${metafields.alto} cm`);
   if (metafields.ancho)       parts.push(`Ancho: ${metafields.ancho} cm`);
   if (metafields.profundidad) parts.push(`Prof.: ${metafields.profundidad} cm`);
-  const dimLine = parts.join('   |   ');
-  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const dimLine = parts.join('  |  ');
+  const esc = s => s
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/[^\x00-\x7F]/g, c => `&#${c.codePointAt(0)};`);
 
   return `<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
   <defs>
@@ -139,21 +141,23 @@ function buildOverlaySVG(metafields) {
     </linearGradient>
   </defs>
   <rect x="0" y="800" width="1024" height="224" fill="url(#g)"/>
-  ${dimLine ? `<text x="512" y="882" font-family="Georgia, 'Times New Roman', serif" font-size="20" fill="white" text-anchor="middle" letter-spacing="2">${esc(dimLine)}</text>` : ''}
-  <text x="512" y="924" font-family="Georgia, 'Times New Roman', serif" font-size="14" fill="rgba(255,255,255,0.88)" text-anchor="middle">Interpretación realizada con IA — La pieza puede presentar leves diferencias</text>
-  <text x="512" y="950" font-family="Georgia, 'Times New Roman', serif" font-size="13" fill="rgba(255,255,255,0.68)" text-anchor="middle">Para más detalle, ver fotos anteriores</text>
+  ${dimLine ? `<text x="512" y="878" font-family="sans-serif" font-size="19" font-weight="600" fill="white" text-anchor="middle">${esc(dimLine)}</text>` : ''}
+  <text x="512" y="920" font-family="sans-serif" font-size="14" fill="rgba(255,255,255,0.9)" text-anchor="middle">${esc('Interpretación realizada con IA — La pieza puede presentar leves diferencias')}</text>
+  <text x="512" y="944" font-family="sans-serif" font-size="13" fill="rgba(255,255,255,0.65)" text-anchor="middle">${esc('Para más detalle, ver fotos anteriores')}</text>
 </svg>`;
 }
 
 function buildMarketingOverlaySVG(customText) {
   if (!customText || !customText.trim()) return null;
   const lines = customText.trim().split('\n').filter(Boolean);
-  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const esc = s => s
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/[^\x00-\x7F]/g, c => `&#${c.codePointAt(0)};`);
   const lineHeight = 38;
   const startY = 900 - Math.floor((lines.length - 1) / 2) * lineHeight;
   const gradStart = Math.max(720, startY - 100);
   const textItems = lines.map((line, i) =>
-    `<text x="512" y="${startY + i * lineHeight}" font-family="Georgia, 'Times New Roman', serif" font-size="28" fill="white" text-anchor="middle" letter-spacing="2">${esc(line)}</text>`
+    `<text x="512" y="${startY + i * lineHeight}" font-family="sans-serif" font-size="26" font-weight="600" fill="white" text-anchor="middle">${esc(line)}</text>`
   ).join('');
   return `<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
   <defs>
