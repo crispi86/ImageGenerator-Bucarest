@@ -152,8 +152,8 @@ function buildOverlaySVG(metafields) {
   </defs>
   <rect x="0" y="800" width="1024" height="224" fill="url(#g)"/>
   ${dimLine ? `<text x="512" y="878" font-family="sans-serif" font-size="19" font-weight="600" fill="white" text-anchor="middle">${esc(dimLine)}</text>` : ''}
-  <text x="512" y="920" font-family="sans-serif" font-size="14" fill="rgba(255,255,255,0.9)" text-anchor="middle">${esc('Interpretación realizada con IA — La pieza puede presentar leves diferencias')}</text>
-  <text x="512" y="944" font-family="sans-serif" font-size="13" fill="rgba(255,255,255,0.65)" text-anchor="middle">${esc('Para más detalle, ver fotos anteriores')}</text>
+  <text x="512" y="920" font-family="sans-serif" font-size="14" fill="white" fill-opacity="0.9" text-anchor="middle">Imagen generada con IA - la pieza puede verse diferente</text>
+  <text x="512" y="944" font-family="sans-serif" font-size="13" fill="white" fill-opacity="0.65" text-anchor="middle">Para mas detalle, ver fotos anteriores</text>
 </svg>`;
 }
 
