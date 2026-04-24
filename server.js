@@ -13,6 +13,11 @@ const PORT = process.env.PORT || 3003;
 
 app.use(express.json({ limit: '50mb' }));
 
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', "frame-ancestors https://admin.shopify.com https://*.myshopify.com");
+  next();
+});
+
 // ── Usage tracking ────────────────────────────────────────────────────────────
 const DAILY_LIMIT = parseInt(process.env.DAILY_IMAGE_LIMIT) || 100;
 let stats = { generated: 0, approved: 0, rejected: 0, costUSD: 0 };
@@ -38,7 +43,12 @@ app.get('/shopify/auth', (req, res) => {
   const appUrl = (process.env.APP_URL || '').trim();
   const scopes = 'read_products,write_products,read_content';
   const redirect = encodeURIComponent(`${appUrl}/shopify/callback`);
-  res.redirect(`https://${shop}/admin/oauth/authorize?client_id=${key}&scope=${scopes}&redirect_uri=${redirect}`);
+  // Break out of Shopify iframe for OAuth (required by browsers)
+  res.send(`<!DOCTYPE html><html><head>
+    <script>window.top === window.self
+      ? window.location.href = 'https://${shop}/admin/oauth/authorize?client_id=${key}&scope=${scopes}&redirect_uri=${redirect}'
+      : window.top.location.href = 'https://${shop}/admin/oauth/authorize?client_id=${key}&scope=${scopes}&redirect_uri=${redirect}';
+    </script></head></html>`);
 });
 
 app.get('/shopify/callback', async (req, res) => {
@@ -380,13 +390,22 @@ app.get('/api/log', requireAuth, (req, res) => {
 app.get('/app.js', (req, res) => res.sendFile(path.join(__dirname, 'app.js')));
 
 // ── Admin UI ──────────────────────────────────────────────────────────────────
-function adminHTML() {
+function adminHTML(host = '') {
+  const apiKey = (process.env.SHOPIFY_API_KEY || '').trim();
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bucarest Image Generator</title>
+${host ? `<script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    if (window['app-bridge'] && '${apiKey}') {
+      window.__shopifyApp = window['app-bridge'].default({ apiKey: '${apiKey}', host: '${host}', forceRedirect: false });
+    }
+  });
+</script>` : ''}
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0ece6;color:#2d2018;min-height:100vh}
@@ -601,10 +620,13 @@ textarea{resize:vertical;line-height:1.5}
 }
 
 app.get('/', (req, res) => {
-  if (process.env.SHOPIFY_ACCESS_TOKEN) return res.redirect('/admin');
-  res.send('Bucarest Image Generator — <a href="/shopify/auth">Conectar con Shopify</a>');
+  if (process.env.SHOPIFY_ACCESS_TOKEN) return res.redirect(`/admin${req.query.host ? '?host=' + req.query.host : ''}`);
+  res.redirect('/shopify/auth');
 });
 
-app.get('/admin', requireAuth, (req, res) => res.send(adminHTML()));
+app.get('/admin', (req, res) => {
+  if (!process.env.SHOPIFY_ACCESS_TOKEN) return res.redirect('/shopify/auth');
+  res.send(adminHTML(req.query.host || ''));
+});
 
 app.listen(PORT, () => console.log(`Bucarest Image Generator en puerto ${PORT}`));
