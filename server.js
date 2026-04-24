@@ -2,6 +2,7 @@ require('dotenv').config();
 const express  = require('express');
 const https    = require('https');
 const path     = require('path');
+const { toFile } = require('openai');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI   = require('openai');
 const shopify  = require('./shopify');
@@ -80,7 +81,7 @@ app.get('/shopify/callback', async (req, res) => {
 const generatedImages = {}; // { productId: base64 }
 
 // ── Core AI logic ─────────────────────────────────────────────────────────────
-async function buildBackgroundPrompt(productTitle, collectionTitle, metafields) {
+async function buildPrompt(productTitle, collectionTitle, metafields) {
   const context  = getContext(collectionTitle, productTitle, metafields);
   const sizeDesc = getSizeDescription(metafields.alto, metafields.ancho, collectionTitle);
 
@@ -89,67 +90,35 @@ async function buildBackgroundPrompt(productTitle, collectionTitle, metafields) 
     max_tokens: 300,
     messages: [{
       role: 'user',
-      content: `Write a DALL-E 3 prompt for an empty interior scene. A "${productTitle}" (${collectionTitle}) will be composited into it afterwards, so the scene must have a clear, unobstructed placement area where this type of object naturally belongs.
+      content: `Write an image editing prompt to place the antique piece "${productTitle}" (${collectionTitle}) into a beautiful aspirational interior scene, using the provided reference photo of the product.
 
-Context: ${context}
-${sizeDesc ? `The object is a ${sizeDesc}` : ''}
+The product should appear: ${context}
+${sizeDesc ? `The piece is a ${sizeDesc}.` : ''}
 
 Requirements:
-- Empty scene — NO object in the placement area, leave it visually open and ready
-- Warm natural light from the side
+- Keep the product exactly as it appears in the reference photo — same colors, details, patina, texture
+- The product is naturally integrated in the scene, at correct scale
+- Warm natural light from the side or a window
 - Neutral contemporary aspirational atmosphere
 - Colors: warm whites, soft grays, natural wood tones
 - No people, no clutter
 - Photorealistic editorial interior photography
-- 100 words max, start directly with the scene description`,
+- 100 words max, describe the scene and product placement`,
     }],
   });
 
   return msg.content[0].text.trim();
 }
 
-async function removeBackground(imageBuffer) {
-  if (!process.env.REMOVE_BG_API_KEY) throw new Error('REMOVE_BG_API_KEY no configurada.');
-  const boundary = 'FormBoundary' + Math.random().toString(36).slice(2);
-  const body = Buffer.concat([
-    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="image_file"; filename="product.jpg"\r\nContent-Type: image/jpeg\r\n\r\n`),
-    imageBuffer,
-    Buffer.from(`\r\n--${boundary}--\r\n`),
-  ]);
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'api.remove.bg',
-      path:     '/v1.0/removebg',
-      method:   'POST',
-      headers: {
-        'X-Api-Key':    process.env.REMOVE_BG_API_KEY,
-        'Content-Type': `multipart/form-data; boundary=${boundary}`,
-        'Content-Length': body.length,
-      },
-    }, res => {
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => {
-        const buf = Buffer.concat(chunks);
-        if (res.statusCode === 200) resolve(buf);
-        else reject(new Error('remove.bg: ' + buf.toString().slice(0, 200)));
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
-
-async function generateBackground(prompt) {
-  const response = await getOpenAI().images.generate({
-    model:   'dall-e-3',
+async function generateProductImage(productBuffer, prompt) {
+  const file = await toFile(productBuffer, 'product.jpg', { type: 'image/jpeg' });
+  const response = await getOpenAI().images.edit({
+    model: 'gpt-image-1',
+    image: file,
     prompt,
-    size:    '1024x1024',
-    quality: 'standard',
-    n:       1,
+    size: '1024x1024',
   });
-  return shopify.downloadImageBuffer(response.data[0].url);
+  return Buffer.from(response.data[0].b64_json, 'base64');
 }
 
 function buildOverlaySVG(metafields) {
@@ -158,7 +127,6 @@ function buildOverlaySVG(metafields) {
   if (metafields.ancho)       parts.push(`Ancho: ${metafields.ancho} cm`);
   if (metafields.profundidad) parts.push(`Prof.: ${metafields.profundidad} cm`);
   const dimLine = parts.join('   |   ');
-
   const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
   return `<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
@@ -175,32 +143,51 @@ function buildOverlaySVG(metafields) {
 </svg>`;
 }
 
-async function compositeImages(bgBuffer, productPngBuffer, collectionTitle, metafields) {
+function buildMarketingOverlaySVG(customText) {
+  if (!customText || !customText.trim()) return null;
+  const lines = customText.trim().split('\n').filter(Boolean);
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const lineHeight = 38;
+  const startY = 900 - Math.floor((lines.length - 1) / 2) * lineHeight;
+  const gradStart = Math.max(720, startY - 100);
+  const textItems = lines.map((line, i) =>
+    `<text x="512" y="${startY + i * lineHeight}" font-family="Georgia, 'Times New Roman', serif" font-size="28" fill="white" text-anchor="middle" letter-spacing="2">${esc(line)}</text>`
+  ).join('');
+  return `<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.7"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="${gradStart}" width="1024" height="${1024 - gradStart}" fill="url(#g)"/>
+  ${textItems}
+</svg>`;
+}
+
+async function addTextOverlay(imageBuffer, metafields) {
   const sharp = require('sharp');
-  const BG    = 1024;
-
-  const wallArt = ['Chilena contemporánea','Chilena clásica','Europea clásica','Extranjera contemporánea','Religiosa','Alfombras y tapicerías','Espejos'];
-  const isWall  = wallArt.includes(collectionTitle);
-
-  const sizeDesc  = getSizeDescription(metafields.alto, metafields.ancho, collectionTitle);
-  const factor    = sizeDesc?.includes('large') ? 0.62 : sizeDesc?.includes('small') ? 0.28 : 0.48;
-  const maxDim    = Math.round(BG * factor);
-
-  const meta      = await sharp(productPngBuffer).metadata();
-  const resizeOpt = meta.width >= meta.height ? { width: maxDim } : { height: maxDim };
-  const resized   = await sharp(productPngBuffer).resize(resizeOpt).png().toBuffer();
-  const gravity   = isWall ? 'centre' : 'south';
   const overlaySvg = Buffer.from(buildOverlaySVG(metafields));
-
-  const result = await sharp(bgBuffer)
-    .resize(BG, BG)
-    .composite([
-      { input: resized,     gravity },
-      { input: overlaySvg, top: 0, left: 0 },
-    ])
+  const result = await sharp(imageBuffer)
+    .resize(1024, 1024)
+    .composite([{ input: overlaySvg, top: 0, left: 0 }])
     .png()
     .toBuffer();
+  return result.toString('base64');
+}
 
+async function addMarketingOverlay(imageBuffer, customText) {
+  const sharp = require('sharp');
+  const svg = buildMarketingOverlaySVG(customText);
+  if (!svg) {
+    const result = await sharp(imageBuffer).resize(1024, 1024).png().toBuffer();
+    return result.toString('base64');
+  }
+  const result = await sharp(imageBuffer)
+    .resize(1024, 1024)
+    .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
+    .png()
+    .toBuffer();
   return result.toString('base64');
 }
 
@@ -221,8 +208,18 @@ app.get('/api/products', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/suggest-prompt', requireAuth, async (req, res) => {
+  const { productTitle, collectionTitle, productId } = req.body;
+  if (!productTitle || !collectionTitle) return res.status(400).json({ error: 'Faltan parámetros' });
+  try {
+    const metafields = productId ? await shopify.getProductMetafields(productId) : {};
+    const prompt = await buildPrompt(productTitle, collectionTitle, metafields);
+    res.json({ prompt });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/generate', requireAuth, async (req, res) => {
-  const { productId, productTitle, collectionTitle, productImageUrl } = req.body;
+  const { productId, productTitle, collectionTitle, productImageUrl, customPrompt } = req.body;
   if (!productId || !productTitle || !collectionTitle)
     return res.status(400).json({ error: 'Faltan parámetros' });
   if (!productImageUrl)
@@ -234,23 +231,20 @@ app.post('/api/generate', requireAuth, async (req, res) => {
 
   try {
     const metafields    = await shopify.getProductMetafields(productId);
-    const bgPrompt      = await buildBackgroundPrompt(productTitle, collectionTitle, metafields);
+    const prompt        = customPrompt || await buildPrompt(productTitle, collectionTitle, metafields);
     const productBuffer = await shopify.downloadImageBuffer(productImageUrl);
-    const [noBgBuffer, bgBuffer] = await Promise.all([
-      removeBackground(productBuffer),
-      generateBackground(bgPrompt),
-    ]);
-    const base64 = await compositeImages(bgBuffer, noBgBuffer, collectionTitle, metafields);
+    const genBuffer     = await generateProductImage(productBuffer, prompt);
+    const base64        = await addTextOverlay(genBuffer, metafields);
 
     generatedImages[productId] = base64;
     stats.generated++;
-    stats.costUSD = Math.round((stats.costUSD + 0.06) * 100) / 100;
+    stats.costUSD = Math.round((stats.costUSD + 0.04) * 100) / 100;
 
     generationLog.push({
-      productId, productTitle, collectionTitle, prompt: bgPrompt, status: 'generated', ts: new Date().toISOString(),
+      productId, productTitle, collectionTitle, prompt, status: 'generated', ts: new Date().toISOString(),
     });
 
-    res.json({ imageUrl: `/api/generated-image/${productId}`, prompt: bgPrompt, cost: 0.06 });
+    res.json({ imageUrl: `/api/generated-image/${productId}`, prompt, cost: 0.04 });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -285,24 +279,21 @@ app.post('/api/generate-batch', requireAuth, async (req, res) => {
     }
     try {
       const metafields    = await shopify.getProductMetafields(productId);
-      const bgPrompt      = await buildBackgroundPrompt(productTitle, collectionTitle, metafields);
+      const prompt        = await buildPrompt(productTitle, collectionTitle, metafields);
       const productBuffer = await shopify.downloadImageBuffer(productImageUrl);
-      const [noBgBuffer, bgBuffer] = await Promise.all([
-        removeBackground(productBuffer),
-        generateBackground(bgPrompt),
-      ]);
-      const base64 = await compositeImages(bgBuffer, noBgBuffer, collectionTitle, metafields);
+      const genBuffer     = await generateProductImage(productBuffer, prompt);
+      const base64        = await addTextOverlay(genBuffer, metafields);
 
       generatedImages[productId] = base64;
       stats.generated++;
-      stats.costUSD = Math.round((stats.costUSD + 0.06) * 100) / 100;
+      stats.costUSD = Math.round((stats.costUSD + 0.04) * 100) / 100;
 
       generationLog.push({
-        productId, productTitle, collectionTitle, prompt: bgPrompt, status: 'generated', ts: new Date().toISOString(),
+        productId, productTitle, collectionTitle, prompt, status: 'generated', ts: new Date().toISOString(),
       });
 
       const imageUrl = `/api/generated-image/${productId}`;
-      send({ type: 'result', productId, productTitle, imageUrl, prompt: bgPrompt, done: i + 1, total: toProcess.length });
+      send({ type: 'result', productId, productTitle, imageUrl, prompt, done: i + 1, total: toProcess.length });
     } catch (e) {
       send({ type: 'error', productId, productTitle, msg: e.message, done: i + 1, total: toProcess.length });
     }
@@ -311,6 +302,27 @@ app.post('/api/generate-batch', requireAuth, async (req, res) => {
 
   send({ type: 'done', stats });
   res.end();
+});
+
+app.post('/api/generate-marketing', requireAuth, async (req, res) => {
+  const { productImageUrl, prompt, overlayText } = req.body;
+  if (!productImageUrl || !prompt)
+    return res.status(400).json({ error: 'Faltan parámetros' });
+  if (!process.env.OPENAI_API_KEY)
+    return res.status(503).json({ error: 'OpenAI API key no configurada.' });
+
+  try {
+    const productBuffer = await shopify.downloadImageBuffer(productImageUrl);
+    const genBuffer     = await generateProductImage(productBuffer, prompt);
+    const base64        = await addMarketingOverlay(genBuffer, overlayText);
+
+    stats.generated++;
+    stats.costUSD = Math.round((stats.costUSD + 0.04) * 100) / 100;
+
+    res.json({ imageBase64: base64 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/api/approve', requireAuth, async (req, res) => {
@@ -370,18 +382,26 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .stats-bar{display:flex;gap:16px;align-items:center;font-size:13px;opacity:.9}
 .stats-bar span{background:rgba(255,255,255,.12);padding:4px 10px;border-radius:12px}
 .container{max-width:1400px;margin:0 auto;padding:24px}
+.tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:2px solid #e0d8d0;padding-bottom:0}
+.tab-btn{padding:10px 22px;border-radius:6px 6px 0 0;font-size:13px;font-weight:600;cursor:pointer;border:none;background:transparent;color:#9a8a7a;transition:all .15s;margin-bottom:-2px;border-bottom:2px solid transparent}
+.tab-btn.active{background:white;color:#2c4a3e;border-bottom:2px solid white}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
 .filter-card{background:white;border-radius:10px;padding:20px 24px;margin-bottom:20px;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;box-shadow:0 1px 3px rgba(0,0,0,.06)}
 .form-group{display:flex;flex-direction:column;gap:6px;min-width:220px}
 label{font-size:12px;font-weight:600;color:#6b5a4e;text-transform:uppercase;letter-spacing:.5px}
-select,input{border:1px solid #ddd;border-radius:6px;padding:8px 12px;font-size:14px;color:#2d2018;background:white}
-select:focus,input:focus{outline:none;border-color:#2c4a3e}
+select,input,textarea{border:1px solid #ddd;border-radius:6px;padding:8px 12px;font-size:14px;color:#2d2018;background:white;font-family:inherit}
+select:focus,input:focus,textarea:focus{outline:none;border-color:#2c4a3e}
+textarea{resize:vertical;line-height:1.5}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:all .15s}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .btn-primary{background:#2c4a3e;color:white}.btn-primary:hover:not(:disabled){background:#1e3329}
 .btn-secondary{background:#f5f0eb;color:#2d2018;border:1px solid #ddd}.btn-secondary:hover:not(:disabled){background:#ede7e0}
 .btn-approve{background:#2d7a4e;color:white;font-size:12px;padding:7px 14px}.btn-approve:hover{background:#1f5c3a}
 .btn-reject{background:#c0392b;color:white;font-size:12px;padding:7px 14px}.btn-reject:hover{background:#962d22}
+.btn-download{background:#1a5276;color:white;font-size:13px;padding:9px 18px}.btn-download:hover:not(:disabled){background:#154360}
 .btn-sm{padding:6px 12px;font-size:12px}
+.btn-xs{padding:4px 10px;font-size:11px;font-weight:600}
 .batch-bar{background:white;border-radius:10px;padding:14px 20px;margin-bottom:20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;box-shadow:0 1px 3px rgba(0,0,0,.06)}
 .cost-chip{background:#fef9f0;border:1px solid #f0d9a0;color:#7a5c1e;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600}
 .products-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:18px}
@@ -389,8 +409,8 @@ select:focus,input:focus{outline:none;border-color:#2c4a3e}
 .product-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.1)}
 .card-select{position:absolute;top:10px;left:10px;z-index:2}
 .card-select input[type=checkbox]{width:18px;height:18px;cursor:pointer;accent-color:#2c4a3e}
-.card-img-wrap{height:200px;overflow:hidden;background:#f5f0eb;position:relative}
-.card-img-wrap img{width:100%;height:100%;object-fit:cover}
+.card-img-wrap{aspect-ratio:1/1;overflow:hidden;background:#f5f0eb;position:relative}
+.card-img-wrap img{width:100%;height:100%;object-fit:contain}
 .card-img-placeholder{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#b0a090;font-size:40px}
 .card-body{padding:14px}
 .card-title{font-size:13px;font-weight:600;color:#2d2018;margin-bottom:10px;line-height:1.4;min-height:36px}
@@ -403,12 +423,13 @@ select:focus,input:focus{outline:none;border-color:#2c4a3e}
 .badge-approved{background:#e8f5e9;color:#2d7a4e}
 .badge-rejected{background:#fce8e6;color:#c0392b}
 .badge-error{background:#fce8e6;color:#c0392b}
-.card-preview{border-top:1px solid #f0ece6;margin-top:12px;padding-top:12px}
-.generated-img-wrap{border-radius:6px;overflow:hidden;margin-bottom:10px}
-.generated-img-wrap img{width:100%;display:block}
-.preview-actions{display:flex;gap:8px;margin-bottom:10px}
-.prompt-details summary{font-size:11px;color:#9a8a7a;cursor:pointer;padding:4px 0}
-.prompt-details p{font-size:11px;color:#6b5a4e;margin-top:6px;line-height:1.5;background:#f5f0eb;padding:8px;border-radius:4px;white-space:pre-wrap}
+.card-preview{border-top:1px solid #f0ece6;margin-top:12px;padding:12px 14px 14px}
+.generated-img-wrap{border-radius:6px;overflow:hidden;margin-bottom:10px;aspect-ratio:1/1}
+.generated-img-wrap img{width:100%;height:100%;object-fit:cover;display:block}
+.preview-actions{display:flex;gap:8px;margin-bottom:12px}
+.prompt-editor label{font-size:11px;color:#9a8a7a;display:block;margin-bottom:4px;text-transform:none;letter-spacing:0;font-weight:400}
+.prompt-editor textarea{width:100%;font-size:11px;padding:8px;border-radius:4px;min-height:80px;color:#4a3a2e;background:#faf8f5;border:1px solid #e0d8d0;resize:vertical;font-family:inherit;line-height:1.5}
+.prompt-editor-actions{margin-top:6px}
 .progress-wrap{position:fixed;top:56px;left:0;right:0;z-index:200;background:white;border-bottom:1px solid #eee;padding:14px 24px;display:none}
 .progress-bar-bg{background:#f0ece6;border-radius:99px;height:8px;overflow:hidden;margin:8px 0}
 .progress-bar-fill{background:#2c4a3e;height:100%;border-radius:99px;transition:width .3s}
@@ -421,11 +442,23 @@ select:focus,input:focus{outline:none;border-color:#2c4a3e}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid #ddd;border-top-color:#2c4a3e;border-radius:50%;animation:spin .6s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .toast{position:fixed;bottom:24px;right:24px;background:#2c4a3e;color:white;padding:12px 20px;border-radius:8px;font-size:13px;z-index:999;display:none}
+.mkt-card{background:white;border-radius:10px;padding:28px;box-shadow:0 1px 3px rgba(0,0,0,.06);max-width:720px}
+.mkt-card h2{font-size:15px;font-weight:600;margin-bottom:6px}
+.mkt-card > p{font-size:13px;color:#6b5a4e;margin-bottom:24px;line-height:1.6}
+.mkt-product-row{display:flex;gap:20px;align-items:flex-start;margin-bottom:20px}
+.mkt-product-thumb{width:110px;height:110px;border-radius:8px;object-fit:contain;background:#f5f0eb;border:1px solid #e8e0d8;flex-shrink:0}
+.mkt-product-thumb-empty{width:110px;height:110px;border-radius:8px;background:#f5f0eb;border:1px solid #e8e0d8;display:flex;align-items:center;justify-content:center;color:#c0a890;font-size:32px;flex-shrink:0}
+.mkt-fields{flex:1;display:flex;flex-direction:column;gap:14px}
+.mkt-label-row{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.mkt-label-row label{margin-bottom:0}
+.mkt-result{margin-top:28px;display:none}
+.mkt-result img{width:100%;border-radius:8px;display:block;margin-bottom:14px;aspect-ratio:1/1;object-fit:cover}
+.mkt-divider{border:none;border-top:1px solid #e8e0d8;margin:24px 0}
 </style>
 </head>
 <body>
 <div class="topbar">
-  <div class="topbar-title">🖼 Bucarest Image Generator</div>
+  <div class="topbar-title">Bucarest Image Generator</div>
   <div class="stats-bar" id="stats-bar">
     <span id="stat-generated">0 generadas</span>
     <span id="stat-approved">0 aprobadas</span>
@@ -439,47 +472,92 @@ select:focus,input:focus{outline:none;border-color:#2c4a3e}
 </div>
 
 <div class="container">
-  <div class="filter-card">
-    <div class="form-group">
-      <label>Colección</label>
-      <select id="collection-select" onchange="onCollectionChange()">
-        <option value="">Cargando colecciones...</option>
-      </select>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="catalog" onclick="switchTab('catalog')">Catálogo</button>
+    <button class="tab-btn" data-tab="marketing" onclick="switchTab('marketing')">Marketing</button>
+  </div>
+
+  <div class="tab-panel active" id="tab-catalog">
+    <div class="filter-card">
+      <div class="form-group">
+        <label>Colección</label>
+        <select id="collection-select" onchange="onCollectionChange()">
+          <option value="">Cargando colecciones...</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" id="btn-load" onclick="loadProducts()" disabled>
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        Cargar productos
+      </button>
     </div>
-    <button class="btn btn-primary" id="btn-load" onclick="loadProducts()" disabled>
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-      Cargar productos
-    </button>
-  </div>
 
-  <div class="batch-bar" id="batch-bar" style="display:none">
-    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;font-size:13px;font-weight:normal">
-      <input type="checkbox" id="select-all" onchange="toggleSelectAll(this)" style="width:16px;height:16px;accent-color:#2c4a3e">
-      Seleccionar todo
-    </label>
-    <span class="cost-chip" id="cost-estimate">Selecciona productos para ver el costo</span>
-    <button class="btn btn-primary btn-sm" id="btn-batch" onclick="generateBatch()" disabled>
-      Generar seleccionados
-    </button>
-    <button class="btn btn-secondary btn-sm" onclick="exportLog()">
-      Exportar log CSV
-    </button>
-  </div>
-
-  <div id="products-container">
-    <div class="empty-state">Selecciona una colección para comenzar</div>
-  </div>
-
-  <div class="log-section" id="log-section" style="display:none">
-    <div class="log-title">
-      <span>Log de generaciones</span>
+    <div class="batch-bar" id="batch-bar" style="display:none">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;font-size:13px;font-weight:normal">
+        <input type="checkbox" id="select-all" onchange="toggleSelectAll(this)" style="width:16px;height:16px;accent-color:#2c4a3e">
+        Seleccionar todo
+      </label>
+      <span class="cost-chip" id="cost-estimate">Selecciona productos para ver el costo</span>
+      <button class="btn btn-primary btn-sm" id="btn-batch" onclick="generateBatch()" disabled>
+        Generar seleccionados
+      </button>
+      <button class="btn btn-secondary btn-sm" onclick="exportLog()">
+        Exportar log CSV
+      </button>
     </div>
-    <div id="log-entries"></div>
+
+    <div id="products-container">
+      <div class="empty-state">Selecciona una colección para comenzar</div>
+    </div>
+
+    <div class="log-section" id="log-section" style="display:none">
+      <div class="log-title"><span>Log de generaciones</span></div>
+      <div id="log-entries"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-marketing">
+    <div class="mkt-card">
+      <h2>Generar imagen para marketing</h2>
+      <p>Selecciona un producto de la colección cargada, escribe o sugiere un prompt, y agrega texto opcional que aparecerá en la imagen. La imagen generada se puede descargar directamente.</p>
+
+      <div class="form-group" style="margin-bottom:20px">
+        <label>Producto</label>
+        <select id="mkt-product-select" onchange="onMarketingProductChange()">
+          <option value="">— Carga una colección primero —</option>
+        </select>
+      </div>
+
+      <div class="mkt-product-row">
+        <div id="mkt-thumb-wrap"><div class="mkt-product-thumb-empty">🖼</div></div>
+        <div class="mkt-fields">
+          <div class="form-group">
+            <div class="mkt-label-row">
+              <label>Prompt</label>
+              <button class="btn btn-secondary btn-xs" id="btn-suggest" onclick="suggestMarketingPrompt()">✨ Sugerir con IA</button>
+            </div>
+            <textarea id="mkt-prompt" rows="5" placeholder="Describe la escena aspiracional que quieres generar..."></textarea>
+          </div>
+          <div class="form-group">
+            <label>Texto en imagen <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#9a8a7a;font-size:11px">(opcional)</span></label>
+            <textarea id="mkt-overlay-text" rows="2" placeholder="Ej: Nueva colección&#10;Bucarest Art &amp; Antiques"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="btn-mkt-generate" onclick="generateMarketing()" disabled>
+        Generar imagen
+      </button>
+
+      <div class="mkt-result" id="mkt-result">
+        <hr class="mkt-divider">
+        <img id="mkt-result-img" src="" alt="Imagen generada para marketing">
+        <button class="btn btn-download" onclick="downloadMarketingImage()">↓ Descargar imagen</button>
+      </div>
+    </div>
   </div>
 </div>
 
 <div class="toast" id="toast"></div>
-
 <script src="/app.js"></script>
 </body>
 </html>`;

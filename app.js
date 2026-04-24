@@ -2,8 +2,9 @@
 let collectionsData   = [];
 let productsData      = [];
 let currentCollection = null;
-const productStates   = {}; // { [productId]: { state, imageUrl, prompt } }
+const productStates   = {};
 const generationLog   = [];
+let marketingResultBase64 = null;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -11,6 +12,16 @@ document.addEventListener('DOMContentLoaded', () => {
   loadStats();
 });
 
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === tab)
+  );
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+}
+
+// ── Collections ───────────────────────────────────────────────────────────────
 async function loadCollections() {
   try {
     const data = await api('/api/collections');
@@ -46,6 +57,7 @@ async function loadProducts() {
     productsData = data.products;
     renderProducts(productsData);
     document.getElementById('batch-bar').style.display = productsData.length ? 'flex' : 'none';
+    updateMarketingProductSelector();
   } catch (e) {
     showToast('Error cargando productos: ' + e.message, true);
   } finally {
@@ -94,41 +106,61 @@ function renderCard(p) {
       <button class="btn btn-approve" onclick="approveImage('${p.id}')">✓ Aprobar</button>
       <button class="btn btn-reject" onclick="rejectImage('${p.id}')">✗ Rechazar</button>
     </div>
-    <details class="prompt-details">
-      <summary>Ver prompt usado</summary>
-      <p id="prompt-text-${p.id}"></p>
-    </details>
+    <div class="prompt-editor">
+      <label>Prompt — edita y regenera si es necesario</label>
+      <textarea id="prompt-edit-${p.id}" placeholder="El prompt aparecerá aquí tras generar..."></textarea>
+      <div class="prompt-editor-actions">
+        <button class="btn btn-secondary btn-xs" onclick="regenerateWithPrompt('${p.id}', this)">↺ Regenerar con este prompt</button>
+      </div>
+    </div>
   </div>
 </div>`;
 }
 
 // ── Generate single ───────────────────────────────────────────────────────────
-async function generateSingle(productId, btn) {
+async function generateSingle(productId, btn, customPrompt = null) {
   const product = productsData.find(p => String(p.id) === String(productId));
   if (!product) return;
 
   setCardState(productId, 'generating');
-  btn.disabled = true;
+  if (btn) btn.disabled = true;
 
   try {
-    const data = await api('/api/generate', 'POST', {
+    const body = {
       productId,
       productTitle: product.title,
       collectionTitle: currentCollection.title,
       productImageUrl: product.image,
-    });
+    };
+    if (customPrompt) body.customPrompt = customPrompt;
+
+    const data = await api('/api/generate', 'POST', body);
     productStates[productId] = { imageUrl: data.imageUrl, prompt: data.prompt };
     setCardState(productId, 'preview');
     document.getElementById('gen-img-' + productId).src = data.imageUrl;
-    document.getElementById('prompt-text-' + productId).textContent = data.prompt;
     document.getElementById('preview-' + productId).style.display = 'block';
+    const promptEdit = document.getElementById('prompt-edit-' + productId);
+    if (promptEdit) promptEdit.value = data.prompt;
     loadStats();
     addLogEntry(productId, product.title, data.imageUrl, data.prompt, 'generated');
   } catch (e) {
     setCardState(productId, 'error');
     showToast('Error: ' + e.message, true);
   } finally {
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function regenerateWithPrompt(productId, btn) {
+  const textarea = document.getElementById('prompt-edit-' + productId);
+  const customPrompt = textarea?.value?.trim();
+  if (!customPrompt) return;
+  const genBtn = document.getElementById('btn-gen-' + productId);
+  if (btn) btn.disabled = true;
+  try {
+    await generateSingle(productId, genBtn, customPrompt);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -196,10 +228,10 @@ function handleBatchMsg(msg, fill, text) {
     setCardState(msg.productId, 'preview');
     const imgEl = document.getElementById('gen-img-' + msg.productId);
     const preEl = document.getElementById('preview-' + msg.productId);
-    const ptEl  = document.getElementById('prompt-text-' + msg.productId);
+    const ptEl  = document.getElementById('prompt-edit-' + msg.productId);
     if (imgEl) imgEl.src = msg.imageUrl;
     if (preEl) preEl.style.display = 'block';
-    if (ptEl)  ptEl.textContent = msg.prompt;
+    if (ptEl)  ptEl.value = msg.prompt;
     const product = productsData.find(p => String(p.id) === String(msg.productId));
     addLogEntry(msg.productId, product?.title || msg.productTitle, msg.imageUrl, msg.prompt, 'generated');
   } else if (msg.type === 'error') {
@@ -238,6 +270,7 @@ async function approveImage(productId) {
 }
 
 async function rejectImage(productId) {
+  const state = productStates[productId];
   await api('/api/reject', 'POST', { productId });
   updateLogEntry(productId, state?.imageUrl, 'rejected');
   setCardState(productId, 'rejected');
@@ -288,9 +321,7 @@ function setCardState(productId, state) {
 }
 
 // ── Batch controls ────────────────────────────────────────────────────────────
-function onCheckboxChange() {
-  updateBatchControls();
-}
+function onCheckboxChange() { updateBatchControls(); }
 
 function toggleSelectAll(chk) {
   document.querySelectorAll('.p-check').forEach(c => c.checked = chk.checked);
@@ -304,8 +335,7 @@ function updateBatchControls() {
   if (selected.length > 0) {
     btn.disabled = false;
     btn.textContent = `Generar seleccionados (${selected.length})`;
-    const cost = (selected.length * 0.04).toFixed(2);
-    chip.textContent = `Costo estimado: $${cost} USD`;
+    chip.textContent = `Costo estimado: $${(selected.length * 0.04).toFixed(2)} USD`;
   } else {
     btn.disabled = true;
     btn.textContent = 'Generar seleccionados';
@@ -340,7 +370,7 @@ function updateLogEntry(productId, imageUrl, status) {
 }
 
 function renderLogSection() {
-  const sec = document.getElementById('log-section');
+  const sec  = document.getElementById('log-section');
   const wrap = document.getElementById('log-entries');
   sec.style.display = 'block';
   wrap.innerHTML = generationLog.slice().reverse().map(e =>
@@ -363,6 +393,103 @@ function exportLog() {
   const a    = document.createElement('a');
   a.href = url; a.download = 'bucarest-images-' + new Date().toISOString().slice(0,10) + '.csv';
   a.click(); URL.revokeObjectURL(url);
+}
+
+// ── Marketing tab ─────────────────────────────────────────────────────────────
+function updateMarketingProductSelector() {
+  const sel = document.getElementById('mkt-product-select');
+  if (!productsData.length) {
+    sel.innerHTML = '<option value="">— Carga una colección primero —</option>';
+    document.getElementById('btn-mkt-generate').disabled = true;
+    return;
+  }
+  sel.innerHTML = '<option value="">— Selecciona un producto —</option>' +
+    productsData.map(p =>
+      `<option value="${p.id}" data-image="${escHtml(p.image || '')}" data-title="${escHtml(p.title)}">${escHtml(p.title)}</option>`
+    ).join('');
+}
+
+function onMarketingProductChange() {
+  const sel = document.getElementById('mkt-product-select');
+  const opt = sel.options[sel.selectedIndex];
+  const imgUrl = opt?.dataset?.image || '';
+  const wrap = document.getElementById('mkt-thumb-wrap');
+
+  wrap.innerHTML = imgUrl
+    ? `<img class="mkt-product-thumb" src="${escHtml(imgUrl)}" alt="">`
+    : `<div class="mkt-product-thumb-empty">🖼</div>`;
+
+  document.getElementById('btn-mkt-generate').disabled = !sel.value;
+  document.getElementById('mkt-result').style.display = 'none';
+}
+
+async function suggestMarketingPrompt() {
+  const sel = document.getElementById('mkt-product-select');
+  if (!sel.value || !currentCollection) {
+    showToast('Selecciona un producto primero', true);
+    return;
+  }
+  const opt = sel.options[sel.selectedIndex];
+  const btn = document.getElementById('btn-suggest');
+  btn.disabled = true;
+  btn.textContent = '⌛';
+
+  try {
+    const data = await api('/api/suggest-prompt', 'POST', {
+      productTitle:    opt.dataset.title,
+      collectionTitle: currentCollection.title,
+      productId:       sel.value,
+    });
+    document.getElementById('mkt-prompt').value = data.prompt;
+  } catch (e) {
+    showToast('Error: ' + e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✨ Sugerir con IA';
+  }
+}
+
+async function generateMarketing() {
+  const sel = document.getElementById('mkt-product-select');
+  const opt = sel.options[sel.selectedIndex];
+  const productImageUrl = opt?.dataset?.image || '';
+  const prompt      = document.getElementById('mkt-prompt').value.trim();
+  const overlayText = document.getElementById('mkt-overlay-text').value.trim();
+
+  if (!productImageUrl) { showToast('El producto no tiene imagen en Shopify', true); return; }
+  if (!prompt)          { showToast('Escribe un prompt para la imagen', true); return; }
+
+  const btn = document.getElementById('btn-mkt-generate');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Generando...';
+
+  try {
+    const data = await api('/api/generate-marketing', 'POST', {
+      productImageUrl,
+      prompt,
+      overlayText: overlayText || null,
+    });
+    marketingResultBase64 = data.imageBase64;
+    document.getElementById('mkt-result-img').src = 'data:image/png;base64,' + data.imageBase64;
+    document.getElementById('mkt-result').style.display = 'block';
+    loadStats();
+  } catch (e) {
+    showToast('Error: ' + e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generar imagen';
+  }
+}
+
+function downloadMarketingImage() {
+  if (!marketingResultBase64) return;
+  const sel  = document.getElementById('mkt-product-select');
+  const name = sel.options[sel.selectedIndex]?.dataset?.title || 'marketing';
+  const filename = 'bucarest-mkt-' + name.toLowerCase().replace(/\s+/g, '-').slice(0, 30) + '-' + Date.now() + '.png';
+  const a = document.createElement('a');
+  a.href = 'data:image/png;base64,' + marketingResultBase64;
+  a.download = filename;
+  a.click();
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
