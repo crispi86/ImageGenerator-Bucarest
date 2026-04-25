@@ -183,9 +183,9 @@ async function addTextOverlay(imageBuffer, metafields) {
   ]);
 
   const parts = [];
-  if (metafields.alto)        parts.push('Alto: ' + metafields.alto + ' cm');
-  if (metafields.ancho)       parts.push('Ancho: ' + metafields.ancho + ' cm');
-  if (metafields.profundidad) parts.push('Prof.: ' + metafields.profundidad + ' cm');
+  if (metafields.alto)        parts.push('Alto: ' + metafields.alto);
+  if (metafields.ancho)       parts.push('Ancho: ' + metafields.ancho);
+  if (metafields.profundidad) parts.push('Prof.: ' + metafields.profundidad);
   const dimLine = toAscii(parts.join('  |  '));
 
   const textImg = new Jimp(1024, GH, 0x00000000);

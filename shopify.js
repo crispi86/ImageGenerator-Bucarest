@@ -92,7 +92,7 @@ async function getProductMetafields(productId) {
     if (typeof val === 'string' && val.startsWith('{')) {
       try {
         const parsed = JSON.parse(val);
-        if (parsed && typeof parsed.value !== 'undefined') val = parsed.value;
+        if (parsed && typeof parsed.value !== 'undefined') val = parsed.unit ? `${parsed.value} ${parsed.unit}` : String(parsed.value);
       } catch {}
     }
     mf[m.key] = val;
