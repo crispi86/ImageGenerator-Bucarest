@@ -87,6 +87,25 @@ function renderProducts(products) {
   container.innerHTML = '<div class="products-grid" id="products-grid">' +
     products.map(p => renderCard(p)).join('') + '</div>';
   updateBatchControls();
+  applyFilters();
+}
+
+function applyFilters() {
+  const statusVal = document.getElementById('filter-status')?.value || '';
+  const stockVal  = document.getElementById('filter-stock')?.value  || '';
+  const hideAi    = document.getElementById('hide-generated')?.checked || false;
+
+  document.querySelectorAll('.product-card').forEach(card => {
+    const id      = card.dataset.id;
+    const product = productsData.find(p => String(p.id) === String(id));
+    if (!product) return;
+
+    const passStatus = !statusVal || product.status === statusVal;
+    const passStock  = !stockVal  || (stockVal === 'available' ? product.available : !product.available);
+    const passAi     = !hideAi   || !product.hasGeneratedImage;
+
+    card.style.display = (passStatus && passStock && passAi) ? '' : 'none';
+  });
 }
 
 function renderCard(p) {
@@ -98,11 +117,19 @@ function renderCard(p) {
     ? `<div class="ai-badge" title="Ya tiene imagen IA aprobada">&#10003; IA aprobada</div>`
     : '';
 
+  const statusBadge = p.status === 'draft'
+    ? `<div class="draft-badge">Borrador</div>`
+    : '';
+
+  const stockBadge = !p.available
+    ? `<div class="nostock-badge">Sin stock</div>`
+    : '';
+
   return `<div class="product-card${p.hasGeneratedImage ? ' has-ai' : ''}" id="card-${p.id}" data-id="${p.id}" data-has-ai="${p.hasGeneratedImage ? '1' : '0'}">
   <div class="card-select">
     <input type="checkbox" class="p-check" data-id="${p.id}" onchange="onCheckboxChange()">
   </div>
-  ${aiBadge}
+  ${aiBadge}${statusBadge}${stockBadge}
   <div class="card-img-wrap">${imgHtml}</div>
   <div class="card-body">
     <div class="card-title">${escHtml(p.title)}</div>
@@ -356,11 +383,7 @@ function selectWithoutGenerated() {
   updateBatchControls();
 }
 
-function toggleHideGenerated(chk) {
-  document.querySelectorAll('.product-card.has-ai').forEach(card => {
-    card.style.display = chk.checked ? 'none' : '';
-  });
-}
+function toggleHideGenerated() { applyFilters(); }
 
 function updateBatchControls() {
   const selected = getSelectedIds();

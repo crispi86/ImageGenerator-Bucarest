@@ -70,7 +70,7 @@ async function getAllProducts() {
 async function getProductsByCollection(collectionId) {
   const fields = 'id,title,images,variants,status';
   const products = await getAllPages(
-    `products.json?collection_id=${collectionId}&status=active&fields=${fields}`,
+    `products.json?collection_id=${collectionId}&fields=${fields}`,
     'products'
   );
   return products.map(p => ({
@@ -80,6 +80,7 @@ async function getProductsByCollection(collectionId) {
     image: p.images?.[0]?.src || null,
     imageCount: p.images?.length || 0,
     hasGeneratedImage: p.images?.some(img => img.alt?.startsWith('Imagen contextual generada para')) || false,
+    available: p.variants?.some(v => (v.inventory_quantity || 0) > 0) || false,
   }));
 }
 

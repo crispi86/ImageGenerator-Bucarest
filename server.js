@@ -473,6 +473,8 @@ textarea{resize:vertical;line-height:1.5}
 .log-entry{font-size:12px;padding:6px 0;border-bottom:1px solid #f0ece6;display:flex;gap:10px;align-items:center}
 .log-entry:last-child{border-bottom:none}
 .ai-badge{position:absolute;top:8px;right:8px;background:#2d7a4e;color:white;font-size:10px;font-weight:700;padding:3px 7px;border-radius:10px;z-index:2;pointer-events:none}
+.draft-badge{position:absolute;top:8px;left:36px;background:#7a5c1e;color:white;font-size:10px;font-weight:700;padding:3px 7px;border-radius:10px;z-index:2;pointer-events:none}
+.nostock-badge{position:absolute;top:32px;left:36px;background:#888;color:white;font-size:10px;font-weight:700;padding:3px 7px;border-radius:10px;z-index:2;pointer-events:none}
 .product-card.has-ai{border:2px solid #a8d5bb}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid #ddd;border-top-color:#2c4a3e;border-radius:50%;animation:spin .6s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -528,6 +530,22 @@ textarea{resize:vertical;line-height:1.5}
         <label>Colección</label>
         <select id="collection-select" onchange="onCollectionChange()">
           <option value="">Cargando colecciones...</option>
+        </select>
+      </div>
+      <div class="form-group" style="min-width:160px">
+        <label>Estado</label>
+        <select id="filter-status" onchange="applyFilters()">
+          <option value="">Todos</option>
+          <option value="active">Activo</option>
+          <option value="draft">Borrador</option>
+        </select>
+      </div>
+      <div class="form-group" style="min-width:160px">
+        <label>Stock</label>
+        <select id="filter-stock" onchange="applyFilters()">
+          <option value="">Todos</option>
+          <option value="available">Con stock</option>
+          <option value="unavailable">Sin stock</option>
         </select>
       </div>
       <button class="btn btn-primary" id="btn-load" onclick="loadProducts()" disabled>
