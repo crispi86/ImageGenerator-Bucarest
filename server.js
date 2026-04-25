@@ -337,7 +337,10 @@ app.post('/api/generate-batch', requireAuth, async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   const send = data => res.write('data: ' + JSON.stringify(data) + '\n\n');
+  const ping = setInterval(() => res.write(': ping\n\n'), 8000);
+  res.on('close', () => clearInterval(ping));
 
   const remaining = DAILY_LIMIT - stats.generated;
   const toProcess = products.slice(0, remaining);
@@ -372,6 +375,7 @@ app.post('/api/generate-batch', requireAuth, async (req, res) => {
     await new Promise(r => setTimeout(r, 13000));
   }
 
+  clearInterval(ping);
   send({ type: 'done', stats });
   res.end();
 });

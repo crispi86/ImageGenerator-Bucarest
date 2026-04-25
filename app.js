@@ -212,7 +212,8 @@ async function regenerateWithPrompt(productId, btn) {
 // ── Batch generate ────────────────────────────────────────────────────────────
 async function generateBatch() {
   const selected = getSelectedIds();
-  if (!selected.length) return;
+  if (!selected.length) { showToast('Selecciona al menos un producto', true); return; }
+  if (!currentCollection) { showToast('Carga una colección primero', true); return; }
 
   const btn = document.getElementById('btn-batch');
   btn.disabled = true;
@@ -222,6 +223,7 @@ async function generateBatch() {
   const progressText = document.getElementById('progress-text');
   progressWrap.style.display = 'block';
   progressFill.style.width = '0%';
+  progressText.textContent = 'Iniciando generación...';
 
   const hint  = document.getElementById('catalog-prompt-hint')?.value.trim() || null;
   const prods = selected.map(id => {
@@ -235,6 +237,11 @@ async function generateBatch() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ products: prods, collectionTitle: currentCollection.title }),
     });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      throw new Error(err.error || resp.statusText);
+    }
 
     const reader  = resp.body.getReader();
     const decoder = new TextDecoder();
