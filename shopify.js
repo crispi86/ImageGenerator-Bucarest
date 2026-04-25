@@ -88,7 +88,14 @@ async function getProductMetafields(productId) {
   const { body } = await shopifyRequest('GET', `products/${productId}/metafields.json?namespace=custom`);
   const mf = {};
   for (const m of body.metafields || []) {
-    mf[m.key] = m.value;
+    let val = m.value;
+    if (typeof val === 'string' && val.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(val);
+        if (parsed && typeof parsed.value !== 'undefined') val = parsed.value;
+      } catch {}
+    }
+    mf[m.key] = val;
   }
   return mf;
 }
