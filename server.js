@@ -176,10 +176,10 @@ async function addTextOverlay(imageBuffer, metafields) {
   const sharp = require('sharp');
   const GH    = 224;
 
-  const [gradPng, f16, f8] = await Promise.all([
+  const [gradPng, f32, f16] = await Promise.all([
     makeGradientPng(1024, GH),
+    loadFont('FONT_SANS_32_WHITE'),
     loadFont('FONT_SANS_16_WHITE'),
-    loadFont('FONT_SANS_8_WHITE'),
   ]);
 
   const parts = [];
@@ -191,13 +191,13 @@ async function addTextOverlay(imageBuffer, metafields) {
   const textImg = new Jimp(1024, GH, 0x00000000);
 
   if (dimLine) {
-    textImg.print(f16, 0, 58, { text: dimLine, alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER }, 1024);
+    textImg.print(f32, 0, 38, { text: dimLine, alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER }, 1024);
   }
-  textImg.print(f16, 0, 105, {
+  textImg.print(f32, 0, 110, {
     text: 'Imagen generada con IA - la pieza puede verse diferente',
     alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
   }, 1024);
-  textImg.print(f8, 0, 132, {
+  textImg.print(f16, 0, 158, {
     text: 'Para mas detalle, ver fotos anteriores',
     alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
   }, 1024);
