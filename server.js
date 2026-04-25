@@ -164,9 +164,9 @@ function buildOverlaySVG(metafields) {
     </linearGradient>
   </defs>
   <rect x="0" y="800" width="1024" height="224" fill="url(#g)"/>
-  ${dimLine ? `<text x="512" y="878" font-family="sans-serif" font-size="19" font-weight="600" fill="white" text-anchor="middle">${esc(dimLine)}</text>` : ''}
-  <text x="512" y="920" font-family="sans-serif" font-size="14" fill="white" fill-opacity="0.9" text-anchor="middle">Imagen generada con IA - la pieza puede verse diferente</text>
-  <text x="512" y="944" font-family="sans-serif" font-size="13" fill="white" fill-opacity="0.65" text-anchor="middle">Para mas detalle, ver fotos anteriores</text>
+  ${dimLine ? `<text x="512" y="878" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="600" fill="white" text-anchor="middle">${esc(dimLine)}</text>` : ''}
+  <text x="512" y="920" font-family="DejaVu Sans, sans-serif" font-size="14" fill="white" fill-opacity="0.9" text-anchor="middle">Imagen generada con IA - la pieza puede verse diferente</text>
+  <text x="512" y="944" font-family="DejaVu Sans, sans-serif" font-size="13" fill="white" fill-opacity="0.65" text-anchor="middle">Para mas detalle, ver fotos anteriores</text>
 </svg>`;
 }
 
@@ -180,7 +180,7 @@ function buildMarketingOverlaySVG(customText) {
   const startY = 900 - Math.floor((lines.length - 1) / 2) * lineHeight;
   const gradStart = Math.max(720, startY - 100);
   const textItems = lines.map((line, i) =>
-    `<text x="512" y="${startY + i * lineHeight}" font-family="sans-serif" font-size="26" font-weight="600" fill="white" text-anchor="middle">${esc(line)}</text>`
+    `<text x="512" y="${startY + i * lineHeight}" font-family="DejaVu Sans, sans-serif" font-size="26" font-weight="600" fill="white" text-anchor="middle">${esc(line)}</text>`
   ).join('');
   return `<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
   <defs>
