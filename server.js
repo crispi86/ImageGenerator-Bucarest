@@ -124,7 +124,9 @@ Requirements:
       break;
     } catch (e) {
       const status = e?.status || e?.response?.status;
-      if (status === 529 && attempt < 4) {
+      if (status === 429 && attempt < 4) {
+        await new Promise(r => setTimeout(r, 15000 + attempt * 5000));
+      } else if (status === 529 && attempt < 4) {
         await new Promise(r => setTimeout(r, (attempt + 1) * 8000));
       } else {
         throw e;
@@ -367,7 +369,7 @@ app.post('/api/generate-batch', requireAuth, async (req, res) => {
     } catch (e) {
       send({ type: 'error', productId, productTitle, msg: e.message, done: i + 1, total: toProcess.length });
     }
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 13000));
   }
 
   send({ type: 'done', stats });
