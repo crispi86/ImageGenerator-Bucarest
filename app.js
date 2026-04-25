@@ -222,80 +222,31 @@ async function generateBatch() {
   const progressFill = document.getElementById('progress-fill');
   const progressText = document.getElementById('progress-text');
   progressWrap.style.display = 'block';
-  progressFill.style.width = '0%';
-  progressText.textContent = 'Iniciando generación...';
 
-  const hint  = document.getElementById('catalog-prompt-hint')?.value.trim() || null;
-  const prods = selected.map(id => {
-    const p = productsData.find(pr => String(pr.id) === String(id));
-    return { productId: id, productTitle: p?.title || '', productImageUrl: p?.image || null, promptHint: hint };
-  });
+  let done = 0;
+  const total = selected.length;
 
   try {
-    const resp = await fetch('/api/generate-batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ products: prods, collectionTitle: currentCollection.title }),
-    });
+    for (const id of selected) {
+      const product = productsData.find(p => String(p.id) === String(id));
+      if (!product) { done++; continue; }
 
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ error: resp.statusText }));
-      throw new Error(err.error || resp.statusText);
+      progressFill.style.width = Math.round((done / total) * 100) + '%';
+      progressText.textContent = `${done + 1} / ${total} — ${product.title}`;
+
+      await generateSingle(id, null);
+      done++;
+      progressFill.style.width = Math.round((done / total) * 100) + '%';
     }
-
-    const reader  = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer    = '';
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data:')) continue;
-        try {
-          const msg = JSON.parse(line.slice(5).trim());
-          handleBatchMsg(msg, progressFill, progressText);
-        } catch {}
-      }
-    }
-  } catch (e) {
-    showToast('Error en lote: ' + e.message, true);
+    progressFill.style.width = '100%';
+    progressText.textContent = 'Lote completado. Revisa las imágenes generadas.';
   } finally {
     btn.disabled = false;
-    setTimeout(() => { progressWrap.style.display = 'none'; }, 2000);
+    setTimeout(() => { progressWrap.style.display = 'none'; }, 3000);
     loadStats();
   }
 }
 
-function handleBatchMsg(msg, fill, text) {
-  if (msg.type === 'total') {
-    text.textContent = `0 / ${msg.total} imágenes generadas...`;
-  } else if (msg.type === 'result') {
-    const pct = Math.round(msg.done / msg.total * 100);
-    fill.style.width = pct + '%';
-    text.textContent = `${msg.done} / ${msg.total} — ${msg.productTitle}`;
-    productStates[msg.productId] = { imageUrl: msg.imageUrl, prompt: msg.prompt };
-    setCardState(msg.productId, 'preview');
-    const imgEl = document.getElementById('gen-img-' + msg.productId);
-    const preEl = document.getElementById('preview-' + msg.productId);
-    const ptEl  = document.getElementById('prompt-edit-' + msg.productId);
-    if (imgEl) imgEl.src = msg.imageUrl;
-    if (preEl) preEl.style.display = 'block';
-    if (ptEl)  ptEl.value = msg.prompt;
-    const product = productsData.find(p => String(p.id) === String(msg.productId));
-    addLogEntry(msg.productId, product?.title || msg.productTitle, msg.imageUrl, msg.prompt, 'generated');
-  } else if (msg.type === 'error') {
-    setCardState(msg.productId, 'error');
-    fill.style.width = Math.round(msg.done / msg.total * 100) + '%';
-    text.textContent = `Error en ${msg.productTitle}: ${msg.msg}`;
-  } else if (msg.type === 'done') {
-    fill.style.width = '100%';
-    text.textContent = 'Lote completado. Revisa las imágenes generadas.';
-  }
-}
 
 // ── Approve / Reject ──────────────────────────────────────────────────────────
 async function approveImage(productId) {
