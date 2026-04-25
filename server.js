@@ -96,7 +96,10 @@ async function buildPrompt(productTitle, collectionTitle, metafields, promptHint
   const context  = getContext(collectionTitle, productTitle, metafields);
   const sizeDesc = getSizeDescription(metafields.alto, metafields.ancho, collectionTitle);
 
-  const msg = await anthropic.messages.create({
+  let msg;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      msg = await anthropic.messages.create({
     model: 'claude-opus-4-7',
     max_tokens: 300,
     messages: [{
@@ -116,8 +119,18 @@ Requirements:
 - No people, no clutter
 - Photorealistic editorial interior photography
 - 100 words max, describe the scene and product placement`,
-    }],
-  });
+      }],
+      });
+      break;
+    } catch (e) {
+      const status = e?.status || e?.response?.status;
+      if (status === 529 && attempt < 4) {
+        await new Promise(r => setTimeout(r, (attempt + 1) * 8000));
+      } else {
+        throw e;
+      }
+    }
+  }
 
   return msg.content[0].text.trim();
 }
