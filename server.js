@@ -146,75 +146,111 @@ async function generateProductImage(productBuffer, prompt) {
   return Buffer.from(response.data[0].b64_json, 'base64');
 }
 
-function buildOverlaySVG(metafields) {
-  const parts = [];
-  if (metafields.alto)        parts.push(`Alto: ${metafields.alto} cm`);
-  if (metafields.ancho)       parts.push(`Ancho: ${metafields.ancho} cm`);
-  if (metafields.profundidad) parts.push(`Prof.: ${metafields.profundidad} cm`);
-  const dimLine = parts.join('  |  ');
-  const esc = s => s
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/[^\x00-\x7F]/g, c => `&#${c.codePointAt(0)};`);
-
-  return `<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#000" stop-opacity="0"/>
-      <stop offset="100%" stop-color="#000" stop-opacity="0.62"/>
-    </linearGradient>
-  </defs>
-  <rect x="0" y="800" width="1024" height="224" fill="url(#g)"/>
-  ${dimLine ? `<text x="512" y="878" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="600" fill="white" text-anchor="middle">${esc(dimLine)}</text>` : ''}
-  <text x="512" y="920" font-family="DejaVu Sans, sans-serif" font-size="14" fill="white" fill-opacity="0.9" text-anchor="middle">Imagen generada con IA - la pieza puede verse diferente</text>
-  <text x="512" y="944" font-family="DejaVu Sans, sans-serif" font-size="13" fill="white" fill-opacity="0.65" text-anchor="middle">Para mas detalle, ver fotos anteriores</text>
-</svg>`;
+// ── Jimp font cache ───────────────────────────────────────────────────────────
+const _fontCache = {};
+async function loadFont(name) {
+  if (!_fontCache[name]) {
+    const Jimp = require('jimp');
+    _fontCache[name] = await Jimp.loadFont(Jimp[name]);
+  }
+  return _fontCache[name];
 }
 
-function buildMarketingOverlaySVG(customText) {
-  if (!customText || !customText.trim()) return null;
-  const lines = customText.trim().split('\n').filter(Boolean);
-  const esc = s => s
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/[^\x00-\x7F]/g, c => `&#${c.codePointAt(0)};`);
-  const lineHeight = 38;
-  const startY = 900 - Math.floor((lines.length - 1) / 2) * lineHeight;
-  const gradStart = Math.max(720, startY - 100);
-  const textItems = lines.map((line, i) =>
-    `<text x="512" y="${startY + i * lineHeight}" font-family="DejaVu Sans, sans-serif" font-size="26" font-weight="600" fill="white" text-anchor="middle">${esc(line)}</text>`
-  ).join('');
-  return `<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#000" stop-opacity="0"/>
-      <stop offset="100%" stop-color="#000" stop-opacity="0.7"/>
-    </linearGradient>
-  </defs>
-  <rect x="0" y="${gradStart}" width="1024" height="${1024 - gradStart}" fill="url(#g)"/>
-  ${textItems}
-</svg>`;
+function toAscii(s) {
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '');
+}
+
+async function makeGradientPng(width, height, maxOpacity = 0.62) {
+  const sharp = require('sharp');
+  const buf   = Buffer.alloc(width * height * 4, 0);
+  const maxA  = Math.round(maxOpacity * 255);
+  for (let y = 0; y < height; y++) {
+    const a = Math.round((y / height) * maxA);
+    for (let x = 0; x < width; x++) buf[(y * width + x) * 4 + 3] = a;
+  }
+  return sharp(buf, { raw: { width, height, channels: 4 } }).png().toBuffer();
 }
 
 async function addTextOverlay(imageBuffer, metafields) {
+  const Jimp  = require('jimp');
   const sharp = require('sharp');
-  const overlaySvg = Buffer.from(buildOverlaySVG(metafields));
+  const GH    = 224;
+
+  const [gradPng, f16, f8] = await Promise.all([
+    makeGradientPng(1024, GH),
+    loadFont('FONT_SANS_16_WHITE'),
+    loadFont('FONT_SANS_8_WHITE'),
+  ]);
+
+  const parts = [];
+  if (metafields.alto)        parts.push('Alto: ' + metafields.alto + ' cm');
+  if (metafields.ancho)       parts.push('Ancho: ' + metafields.ancho + ' cm');
+  if (metafields.profundidad) parts.push('Prof.: ' + metafields.profundidad + ' cm');
+  const dimLine = toAscii(parts.join('  |  '));
+
+  const textImg = new Jimp(1024, GH, 0x00000000);
+
+  if (dimLine) {
+    textImg.print(f16, 0, 58, { text: dimLine, alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER }, 1024);
+  }
+  textImg.print(f16, 0, 105, {
+    text: 'Imagen generada con IA - la pieza puede verse diferente',
+    alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
+  }, 1024);
+  textImg.print(f8, 0, 132, {
+    text: 'Para mas detalle, ver fotos anteriores',
+    alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
+  }, 1024);
+
+  const textPng = await textImg.getBufferAsync(Jimp.MIME_PNG);
+
   const result = await sharp(imageBuffer)
     .resize(1024, 1024)
-    .composite([{ input: overlaySvg, top: 0, left: 0 }])
+    .composite([
+      { input: gradPng, top: 800, left: 0 },
+      { input: textPng, top: 800, left: 0 },
+    ])
     .png()
     .toBuffer();
   return result.toString('base64');
 }
 
 async function addMarketingOverlay(imageBuffer, customText) {
+  const Jimp  = require('jimp');
   const sharp = require('sharp');
-  const svg = buildMarketingOverlaySVG(customText);
-  if (!svg) {
+
+  if (!customText || !customText.trim()) {
     const result = await sharp(imageBuffer).resize(1024, 1024).png().toBuffer();
     return result.toString('base64');
   }
+
+  const lines = customText.trim().split('\n').filter(Boolean).map(toAscii);
+  const GH    = 304;
+
+  const [gradPng, f32] = await Promise.all([
+    makeGradientPng(1024, GH, 0.70),
+    loadFont('FONT_SANS_32_WHITE'),
+  ]);
+
+  const textImg = new Jimp(1024, GH, 0x00000000);
+  const lineH   = 46;
+  const startY  = Math.max(10, GH - lines.length * lineH - 30);
+
+  lines.forEach((line, i) => {
+    textImg.print(f32, 0, startY + i * lineH, {
+      text: line,
+      alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
+    }, 1024);
+  });
+
+  const textPng = await textImg.getBufferAsync(Jimp.MIME_PNG);
+
   const result = await sharp(imageBuffer)
     .resize(1024, 1024)
-    .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
+    .composite([
+      { input: gradPng, top: 720, left: 0 },
+      { input: textPng, top: 720, left: 0 },
+    ])
     .png()
     .toBuffer();
   return result.toString('base64');
