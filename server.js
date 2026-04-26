@@ -137,11 +137,51 @@ Requirements:
   return msg.content[0].text.trim();
 }
 
+function removeBackground(imageBuffer) {
+  return new Promise((resolve, reject) => {
+    const boundary = '----FormBoundary' + Date.now().toString(16);
+    const partHeader = Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="image_file"; filename="product.jpg"\r\nContent-Type: image/jpeg\r\n\r\n`
+    );
+    const tail = Buffer.from(
+      `\r\n--${boundary}\r\nContent-Disposition: form-data; name="size"\r\n\r\nauto\r\n--${boundary}--\r\n`
+    );
+    const body = Buffer.concat([partHeader, imageBuffer, tail]);
+    const options = {
+      hostname: 'api.remove.bg',
+      path: '/v1.0/removebg',
+      method: 'POST',
+      headers: {
+        'X-Api-Key': process.env.REMOVEBG_API_KEY,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': body.length,
+      },
+    };
+    const req = https.request(options, res => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => {
+        if (res.statusCode !== 200)
+          return reject(new Error(`remove.bg ${res.statusCode}: ${Buffer.concat(chunks).toString()}`));
+        resolve(Buffer.concat(chunks));
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 async function generateProductImage(productBuffer, prompt) {
-  const file = await toFile(productBuffer, 'product.jpg', { type: 'image/jpeg' });
+  const maskBuffer = await removeBackground(productBuffer);
+  const [imageFile, maskFile] = await Promise.all([
+    toFile(productBuffer, 'product.jpg', { type: 'image/jpeg' }),
+    toFile(maskBuffer, 'mask.png', { type: 'image/png' }),
+  ]);
   const response = await getOpenAI().images.edit({
     model: 'gpt-image-1',
-    image: file,
+    image: imageFile,
+    mask: maskFile,
     prompt,
     size: '1024x1024',
   });
