@@ -176,12 +176,11 @@ async function makeGradientPng(width, height, maxOpacity = 0.62) {
 async function addTextOverlay(imageBuffer, metafields) {
   const Jimp  = require('jimp');
   const sharp = require('sharp');
-  const GH    = 224;
+  const GH    = 310;
 
-  const [gradPng, f32, f16] = await Promise.all([
+  const [gradPng, f32] = await Promise.all([
     makeGradientPng(1024, GH),
     loadFont('FONT_SANS_32_WHITE'),
-    loadFont('FONT_SANS_16_WHITE'),
   ]);
 
   const parts = [];
@@ -193,24 +192,24 @@ async function addTextOverlay(imageBuffer, metafields) {
   const textImg = new Jimp(1024, GH, 0x00000000);
 
   if (dimLine) {
-    textImg.print(f32, 0, 38, { text: dimLine, alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER }, 1024);
+    textImg.print(f32, 0, 20, { text: dimLine, alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER }, 1024);
   }
-  textImg.print(f16, 0, 110, {
-    text: 'Imagen ilustrativa generada con inteligencia artificial.',
+  textImg.print(f32, 20, 90, {
+    text: toAscii('Atencion: Imagen exclusivamente referencial generada con IA.'),
     alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
-  }, 1024);
-  textImg.print(f16, 0, 136, {
-    text: 'La pieza original difiere en color, textura, diseno, proporciones y tamano.',
+  }, 984);
+  textImg.print(f32, 20, 170, {
+    text: toAscii('La pieza original difiere en color, textura, diseno, proporciones y tamano.'),
     alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
-  }, 1024);
+  }, 984);
 
   const textPng = await textImg.getBufferAsync(Jimp.MIME_PNG);
 
   const result = await sharp(imageBuffer)
     .resize(1024, 1024)
     .composite([
-      { input: gradPng, top: 800, left: 0 },
-      { input: textPng, top: 800, left: 0 },
+      { input: gradPng, top: 714, left: 0 },
+      { input: textPng, top: 714, left: 0 },
     ])
     .png()
     .toBuffer();
