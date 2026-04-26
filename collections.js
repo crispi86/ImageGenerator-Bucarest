@@ -79,11 +79,28 @@ function getSizeDescription(alto, ancho, collectionTitle) {
     'Extranjera contemporánea', 'Religiosa', 'Alfombras y tapicerías',
   ];
   const isWallArt = wallArtCollections.includes(collectionTitle);
-  const ref = isWallArt ? parseFloat(ancho) : parseFloat(alto);
-  if (!ref || isNaN(ref)) return null;
-  if (ref < 50)  return 'small, delicate piece that appears intimate in scale';
-  if (ref <= 120) return 'medium sized piece with a notable presence in the room';
-  return 'large, visually dominant piece that anchors the space';
+  const h = parseFloat(alto);
+  const w = parseFloat(ancho);
+  const ref = isWallArt ? w : h;
+
+  let scaleDesc;
+  if (!ref || isNaN(ref)) {
+    scaleDesc = null;
+  } else if (ref < 50) {
+    scaleDesc = 'small, delicate piece that appears intimate in scale';
+  } else if (ref <= 120) {
+    scaleDesc = 'medium sized piece with a notable presence in the room';
+  } else {
+    scaleDesc = 'large, visually dominant piece that anchors the space';
+  }
+
+  const dims = [];
+  if (!isNaN(h) && h > 0) dims.push(`${h}cm tall`);
+  if (!isNaN(w) && w > 0) dims.push(`${w}cm wide`);
+  const exactDims = dims.length ? `The piece measures exactly ${dims.join(' × ')}. Render it at true-to-life scale relative to surrounding furniture (standard chair: ~90cm, sofa: ~85cm, door: ~200cm).` : null;
+
+  if (!scaleDesc && !exactDims) return null;
+  return [scaleDesc, exactDims].filter(Boolean).join(' ');
 }
 
 module.exports = { TARGET_COLLECTIONS, getContext, getSizeDescription };
