@@ -173,20 +173,10 @@ function removeBackground(imageBuffer) {
 }
 
 async function generateProductImage(productBuffer, prompt) {
-  const sharp = require('sharp');
-  const rawMask = await removeBackground(productBuffer);
-  const [resizedImage, resizedMask] = await Promise.all([
-    sharp(productBuffer).resize(1024, 1024, { fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 1 } }).jpeg().toBuffer(),
-    sharp(rawMask).resize(1024, 1024, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer(),
-  ]);
-  const [imageFile, maskFile] = await Promise.all([
-    toFile(resizedImage, 'product.jpg', { type: 'image/jpeg' }),
-    toFile(resizedMask, 'mask.png', { type: 'image/png' }),
-  ]);
+  const file = await toFile(productBuffer, 'product.jpg', { type: 'image/jpeg' });
   const response = await getOpenAI().images.edit({
     model: 'gpt-image-1',
-    image: imageFile,
-    mask: maskFile,
+    image: file,
     prompt,
     size: '1024x1024',
   });
