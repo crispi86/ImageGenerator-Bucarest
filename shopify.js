@@ -104,7 +104,13 @@ async function uploadProductImage(productId, base64, filename, alt) {
   const { body } = await shopifyRequest('POST', `products/${productId}/images.json`, {
     image: { attachment: base64, filename, alt },
   });
-  return body.image;
+  const image = body.image;
+  if (image?.id) {
+    await shopifyRequest('PUT', `products/${productId}/images/${image.id}.json`, {
+      image: { position: 3 },
+    });
+  }
+  return image;
 }
 
 function downloadImageBuffer(url) {
