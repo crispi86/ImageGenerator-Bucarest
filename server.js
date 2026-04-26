@@ -195,12 +195,12 @@ async function addTextOverlay(imageBuffer, metafields) {
   if (dimLine) {
     textImg.print(f32, 0, 38, { text: dimLine, alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER }, 1024);
   }
-  textImg.print(f32, 0, 110, {
-    text: 'Imagen generada con IA - la pieza puede verse diferente',
+  textImg.print(f16, 0, 110, {
+    text: 'Imagen ilustrativa generada con inteligencia artificial.',
     alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
   }, 1024);
-  textImg.print(f16, 0, 158, {
-    text: 'Para mas detalle, ver fotos anteriores',
+  textImg.print(f16, 0, 136, {
+    text: 'La pieza original difiere en color, textura, diseno, proporciones y tamano.',
     alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
   }, 1024);
 
